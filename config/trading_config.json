@@ -1,0 +1,104 @@
+{
+  "trading": {
+    "enabled": false,
+    "symbols": [
+      "BTC/USDT",
+      "ETH/USDT"
+    ],
+    "default_agent": "RSI Agent",
+    "loop_interval": 10,
+    "analysis_lookback_hours": 24
+  },
+  "exchange": {
+    "name": "blofin",
+    "sandbox": true,
+    "api_key": "",
+    "api_secret": "",
+    "passphrase": "",
+    "rate_limit": 10,
+    "timeout": 30
+  },
+  "risk": {
+    "max_position_size_pct": 0.1,
+    "max_daily_loss_pct": 0.05,
+    "max_total_exposure_pct": 0.5,
+    "min_confidence_threshold": 0.6,
+    "max_positions_per_symbol": 1,
+    "max_total_positions": 5,
+    "stop_loss_pct": 0.02,
+    "take_profit_pct": 0.06,
+    "min_order_size": 10.0,
+    "min_order_amount": 0.01,
+    "max_leverage": 1.0,
+    "portfolio_value": 50000.0
+  },
+  "agents": {
+    "rsi": {
+      "rsi_period": 14,
+      "oversold_threshold": 30,
+      "overbought_threshold": 70,
+      "minimum_confidence": 0.6
+    },
+    "macd": {
+      "fast_period": 12,
+      "slow_period": 26,
+      "signal_period": 9,
+      "minimum_confidence": 0.5,
+      "use_histogram": true
+    },
+    "random_forest": {
+      "n_estimators": 100,
+      "max_depth": 10,
+      "prediction_threshold": 0.6,
+      "lookback_periods": 20,
+      "retrain_interval": 24
+    }
+  },
+  "data": {
+    "collection_enabled": true,
+    "collection_interval": 60,
+    "storage_path": "data/market_data.db",
+    "backup_enabled": true,
+    "backup_interval": 3600,
+    "cleanup_older_than_days": 90
+  },
+  "logging": {
+    "level": "INFO",
+    "file_path": "logs/trading.log",
+    "max_file_size": "10MB",
+    "backup_count": 5,
+    "console_output": true
+  },
+  "gui": {
+    "theme": "dark",
+    "update_interval": 1000,
+    "chart_timeframe": "1h",
+    "default_window_size": [
+      1200,
+      800
+    ],
+    "auto_refresh": true
+  },
+  "notifications": {
+    "enabled": false,
+    "email": {
+      "enabled": false,
+      "smtp_server": "",
+      "smtp_port": 587,
+      "username": "",
+      "password": "",
+      "to_address": ""
+    },
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "timeout": 10
+    }
+  },
+  "system": {
+    "auto_restart": true,
+    "max_memory_mb": 1024,
+    "performance_monitoring": true,
+    "health_check_interval": 300
+  }
+}
