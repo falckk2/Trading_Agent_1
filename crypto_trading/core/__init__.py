@@ -27,6 +27,9 @@ from .trading_engine import TradingEngine
 from .risk_manager import RiskManager
 from .event_bus import EventBus
 from .config_manager import ConfigManager
+from .order_manager import OrderManager
+from .connection_manager import ConnectionManager
+from .portfolio_tracker import PortfolioTracker
 
 __all__ = [
     # Interfaces
@@ -55,5 +58,8 @@ __all__ = [
     'TradingEngine',
     'RiskManager',
     'EventBus',
-    'ConfigManager'
+    'ConfigManager',
+    'OrderManager',
+    'ConnectionManager',
+    'PortfolioTracker'
 ]
