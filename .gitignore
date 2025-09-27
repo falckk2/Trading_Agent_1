@@ -54,3 +54,49 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+
+# Crypto Trading specific
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+models/
+data/cache/
+data/downloads/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# ML Models and Data
+*.model
+*.weights
+checkpoints/
+tensorboard_logs/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Trading data
+historical_data/
+market_data/
+backtest_results/
+
+# API keys and credentials
+api_keys.json
+credentials.json
+secrets.json
+
+# Temporary files
+temp/
+tmp/
+.tmp/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Coverage reports
+.coverage.*
+coverage.xml
