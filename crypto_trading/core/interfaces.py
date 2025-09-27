@@ -135,6 +135,30 @@ class IExchangeClient(ABC):
         pass
 
 
+class IStrategy(ABC):
+    """Interface for trading strategy implementations."""
+
+    @abstractmethod
+    def analyze(self, market_data: List[MarketData]) -> TradingSignal:
+        """Analyze market data and generate trading signals."""
+        pass
+
+    @abstractmethod
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get strategy parameters."""
+        pass
+
+    @abstractmethod
+    def set_parameters(self, parameters: Dict[str, Any]) -> None:
+        """Set strategy parameters."""
+        pass
+
+    @abstractmethod
+    def validate_signal(self, signal: TradingSignal) -> bool:
+        """Validate a trading signal."""
+        pass
+
+
 class ITradingAgent(ABC):
     """Interface for trading agent implementations."""
 
@@ -175,6 +199,31 @@ class IDataCollector(ABC):
     @abstractmethod
     async def store_data(self, data: List[MarketData]) -> None:
         """Store collected data."""
+        pass
+
+
+class IDataProvider(ABC):
+    """Interface for data provider implementations."""
+
+    @abstractmethod
+    async def get_historical_data(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime
+    ) -> List[MarketData]:
+        """Get historical market data."""
+        pass
+
+    @abstractmethod
+    async def get_realtime_data(self, symbol: str) -> MarketData:
+        """Get current/realtime market data."""
+        pass
+
+    @abstractmethod
+    async def get_data_range(self, symbol: str) -> Dict[str, datetime]:
+        """Get available data range for a symbol."""
         pass
 
 
@@ -273,4 +322,27 @@ class IConfigManager(ABC):
     @abstractmethod
     def load(self) -> None:
         """Load configuration from storage."""
+        pass
+
+
+# Aliases for backward compatibility
+IExchange = IExchangeClient
+
+
+class IPortfolioManager(ABC):
+    """Interface for portfolio management implementations."""
+
+    @abstractmethod
+    def get_positions(self) -> List[Position]:
+        """Get current positions."""
+        pass
+
+    @abstractmethod
+    def get_balance(self) -> Dict[str, Decimal]:
+        """Get account balance."""
+        pass
+
+    @abstractmethod
+    def update_position(self, position: Position) -> None:
+        """Update a position."""
         pass

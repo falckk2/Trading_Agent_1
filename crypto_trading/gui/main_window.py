@@ -20,6 +20,7 @@ from ..exchange.blofin_client import BlofinClient
 from ..agents.technical.rsi_agent import RSIAgent
 from ..agents.technical.macd_agent import MACDAgent
 from ..agents.ml.random_forest_agent import RandomForestAgent
+from ..data.data_manager import DataManager
 
 
 class MainWindow:

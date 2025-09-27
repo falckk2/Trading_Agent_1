@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Dict, List, Optional, Any
 
 from ...core.models import MarketData, TradingSignal, SignalType
-from ..base_agent import BaseTradingAgent
+from ..base_agent import BaseAgent as BaseTradingAgent
 from .technical_strategy import TechnicalStrategy
 
 

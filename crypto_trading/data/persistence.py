@@ -16,7 +16,7 @@ from loguru import logger
 
 from ..core.interfaces import Order, Position, MarketData, TradingSignal, OrderSide, OrderType, OrderStatus
 from ..core.portfolio_tracker import TradeRecord, PortfolioSnapshot, PerformanceMetrics
-from ..utils.exceptions import DataException
+from ..utils.exceptions import DataError as DataException
 
 
 class DecimalEncoder(json.JSONEncoder):

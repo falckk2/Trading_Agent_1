@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import mean_squared_error, r2_score
 
 from ...core.models import MarketData, TradingSignal, SignalType
-from ..base_agent import BaseTradingAgent
+from ..base_agent import BaseAgent as BaseTradingAgent
 from .ml_strategy import MLStrategy
 
 

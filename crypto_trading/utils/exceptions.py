@@ -61,3 +61,8 @@ class ConfigurationError(TradingSystemError):
 class RiskManagementError(TradingSystemError):
     """Raised when risk management rules are violated."""
     pass
+
+
+class SecurityError(TradingSystemError):
+    """Raised when security-related operations fail."""
+    pass

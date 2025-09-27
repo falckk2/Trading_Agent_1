@@ -10,7 +10,7 @@ import logging
 
 from ..core.interfaces import ITradingAgent, IStrategy, IExchange, IRiskManager, IPortfolioManager
 from ..core.exceptions import AgentException
-from .base_agent import BaseTradingAgent
+from .base_agent import BaseAgent as BaseTradingAgent
 
 
 class AgentManager:
