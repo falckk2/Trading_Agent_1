@@ -122,3 +122,22 @@ class AgentInitializationError(AgentException):
 class AgentExecutionError(AgentException):
     """Exception for agent execution errors."""
     pass
+
+
+class AgentNotFoundError(AgentException):
+    """Exception raised when a requested agent is not found."""
+    pass
+
+
+# Aliases for backward compatibility with utils.exceptions
+TradingSystemError = TradingException
+ExchangeError = ExchangeException
+ConnectionError = ExchangeConnectionError
+OrderError = OrderException
+DataError = DataException
+DataCollectionError = DataException
+DataProcessingError = DataException
+ConfigurationError = ConfigurationException
+RiskManagementError = RiskManagementException
+SecurityError = TradingException
+AgentError = AgentException

@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from crypto_trading.agents.technical.rsi_agent import RSIAgent
 from crypto_trading.core.interfaces import MarketData, TradingSignal, OrderSide
-from crypto_trading.utils.exceptions import AgentInitializationError
+from crypto_trading.core.exceptions import AgentInitializationError
 
 
 class TestRSIAgent:
@@ -214,14 +214,26 @@ class TestRSIAgent:
         """Test confidence calculation logic."""
         # Test oversold confidence calculation
         confidence = rsi_agent._calculate_rsi_confidence(25, 30, True)  # Very oversold
-        assert confidence > 0.5  # Should have high confidence
+        # Formula: (30-25)/30 * 0.8 + 0.2 = 0.167*0.8 + 0.2 = 0.333
+        assert 0.3 <= confidence <= 0.4  # Should have moderate confidence
 
         confidence = rsi_agent._calculate_rsi_confidence(29, 30, True)  # Slightly oversold
         assert 0.2 <= confidence <= 0.9
 
+        # Test very oversold for high confidence
+        confidence = rsi_agent._calculate_rsi_confidence(10, 30, True)  # Very oversold
+        # Formula: (30-10)/30 * 0.8 + 0.2 = 0.667*0.8 + 0.2 = 0.733
+        assert confidence > 0.7  # Should have high confidence
+
         # Test overbought confidence calculation
         confidence = rsi_agent._calculate_rsi_confidence(75, 70, False)  # Very overbought
-        assert confidence > 0.5  # Should have high confidence
+        # Formula: (75-70)/(100-70) * 0.8 + 0.2 = 0.167*0.8 + 0.2 = 0.333
+        assert 0.3 <= confidence <= 0.4
+
+        # Test very overbought for high confidence
+        confidence = rsi_agent._calculate_rsi_confidence(90, 70, False)  # Very overbought
+        # Formula: (90-70)/(100-70) * 0.8 + 0.2 = 0.667*0.8 + 0.2 = 0.733
+        assert confidence > 0.7  # Should have high confidence
 
         # Test neutral zone confidence
         confidence = rsi_agent._calculate_rsi_confidence(50, 30, True)

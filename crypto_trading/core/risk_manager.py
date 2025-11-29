@@ -3,7 +3,7 @@ Risk management implementation for trading operations.
 Provides position sizing, risk validation, and loss limits.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from decimal import Decimal
 from datetime import datetime, timedelta
 from loguru import logger
@@ -12,7 +12,16 @@ from .interfaces import (
     IRiskManager, Order, Position, TradingSignal, OrderSide,
     IConfigManager
 )
-from ..utils.exceptions import RiskManagementError
+from .exceptions import RiskManagementError
+from .constants import (
+    DEFAULT_MAX_POSITION_SIZE_PCT, DEFAULT_MAX_DAILY_LOSS_PCT,
+    DEFAULT_MAX_TOTAL_EXPOSURE_PCT, DEFAULT_MIN_CONFIDENCE_THRESHOLD,
+    DEFAULT_MAX_POSITIONS_PER_SYMBOL, DEFAULT_MAX_TOTAL_POSITIONS,
+    DEFAULT_STOP_LOSS_PCT, DEFAULT_TAKE_PROFIT_PCT,
+    DEFAULT_MIN_ORDER_SIZE, DEFAULT_MIN_ORDER_AMOUNT,
+    DEFAULT_MAX_LEVERAGE, DEFAULT_PORTFOLIO_VALUE,
+    DEFAULT_RISK_FREE_RATE, DEFAULT_BTC_PRICE
+)
 
 
 class RiskManager(IRiskManager):
@@ -23,24 +32,25 @@ class RiskManager(IRiskManager):
         self.daily_losses: Dict[str, Decimal] = {}  # Track daily losses by date
         self.position_history: List[Position] = []
 
-        # Default risk parameters
+        # Default risk parameters from constants
         self.default_config = {
-            "max_position_size_pct": 0.1,  # 10% of balance per position
-            "max_daily_loss_pct": 0.05,   # 5% daily loss limit
-            "max_total_exposure_pct": 0.5, # 50% total exposure
-            "min_confidence_threshold": 0.6,
-            "max_positions_per_symbol": 1,
-            "max_total_positions": 5,
-            "stop_loss_pct": 0.02,         # 2% stop loss
-            "take_profit_pct": 0.06,       # 6% take profit
-            "min_order_size": 10.0,        # Minimum order size in base currency
-            "min_order_amount": 0.01,      # Minimum order amount
-            "max_leverage": 1.0,           # No leverage by default
-            "portfolio_value": 100000.0,   # Default portfolio value
-            "risk_free_rate": 0.02         # 2% annual risk-free rate
+            "max_position_size_pct": DEFAULT_MAX_POSITION_SIZE_PCT,
+            "max_daily_loss_pct": DEFAULT_MAX_DAILY_LOSS_PCT,
+            "max_total_exposure_pct": DEFAULT_MAX_TOTAL_EXPOSURE_PCT,
+            "min_confidence_threshold": DEFAULT_MIN_CONFIDENCE_THRESHOLD,
+            "max_positions_per_symbol": DEFAULT_MAX_POSITIONS_PER_SYMBOL,
+            "max_total_positions": DEFAULT_MAX_TOTAL_POSITIONS,
+            "stop_loss_pct": DEFAULT_STOP_LOSS_PCT,
+            "take_profit_pct": DEFAULT_TAKE_PROFIT_PCT,
+            "min_order_size": DEFAULT_MIN_ORDER_SIZE,
+            "min_order_amount": DEFAULT_MIN_ORDER_AMOUNT,
+            "max_leverage": DEFAULT_MAX_LEVERAGE,
+            "portfolio_value": float(DEFAULT_PORTFOLIO_VALUE),
+            "risk_free_rate": DEFAULT_RISK_FREE_RATE,
+            "default_price": float(DEFAULT_BTC_PRICE)
         }
 
-    def _get_config(self, key: str) -> any:
+    def _get_config(self, key: str) -> Any:
         """Get configuration value with fallback to default."""
         if self.config_manager:
             return self.config_manager.get(f"risk.{key}", self.default_config.get(key))
@@ -101,9 +111,9 @@ class RiskManager(IRiskManager):
         today = datetime.now().date().isoformat()
         daily_loss = self.daily_losses.get(today, Decimal('0'))
         max_daily_loss_pct = Decimal(str(self._get_config("max_daily_loss_pct")))
+        portfolio_value = Decimal(str(self._get_config("portfolio_value")))
 
-        # This is a simplified check - in production, you'd calculate against portfolio value
-        max_daily_loss = Decimal('10000') * max_daily_loss_pct  # Assuming $10k portfolio
+        max_daily_loss = portfolio_value * max_daily_loss_pct
 
         return daily_loss < max_daily_loss
 
@@ -133,16 +143,16 @@ class RiskManager(IRiskManager):
     def _check_exposure_limits(self, order: Order, positions: List[Position]) -> bool:
         """Check total exposure limits."""
         max_exposure_pct = Decimal(str(self._get_config("max_total_exposure_pct")))
+        portfolio_value = Decimal(str(self._get_config("portfolio_value")))
 
         # Calculate current exposure
         current_exposure = sum(abs(p.amount * p.current_price) for p in positions)
 
-        # Calculate new exposure
-        order_value = order.amount * (order.price or Decimal('50000'))  # Default price assumption
+        # Calculate new exposure - use order price if available, otherwise use a reasonable default
+        order_price = order.price if order.price else DEFAULT_BTC_PRICE
+        order_value = order.amount * order_price
         new_exposure = current_exposure + order_value
 
-        # This is simplified - should use actual portfolio value
-        portfolio_value = Decimal(str(self._get_config("portfolio_value") or 50000))  # Default $50k portfolio
         max_exposure = portfolio_value * max_exposure_pct
 
         return new_exposure <= max_exposure
@@ -150,10 +160,10 @@ class RiskManager(IRiskManager):
     def _check_order_size_limits(self, order: Order) -> bool:
         """Check order size limits."""
         min_order_size = Decimal(str(self._get_config("min_order_size")))
-        min_order_amount = Decimal(str(self._get_config("min_order_amount") or 0.001))
+        min_order_amount = Decimal(str(self._get_config("min_order_amount") or DEFAULT_MIN_ORDER_AMOUNT))
 
         # Calculate order value
-        order_price = order.price or Decimal('50000')  # Default price assumption
+        order_price = order.price or DEFAULT_BTC_PRICE
         order_value = order.amount * order_price
 
         # Check both minimum value and minimum amount
@@ -188,10 +198,11 @@ class RiskManager(IRiskManager):
 
             # Convert to position amount based on price
             if signal.price:
-                position_amount = final_size / Decimal(str(signal.price))
+                position_amount = final_size / signal.price
             else:
-                # Use default conversion if no price provided
-                position_amount = final_size / Decimal('50000')  # Assuming BTC price
+                # Use default conversion if no price provided - get from config or use default
+                default_price = Decimal(str(self._get_config("default_price") or DEFAULT_BTC_PRICE))
+                position_amount = final_size / default_price
 
             # Apply minimum size check
             min_order_size = Decimal(str(self._get_config("min_order_size")))
@@ -227,7 +238,7 @@ class RiskManager(IRiskManager):
         if pnl < 0:  # Only track losses
             self.daily_losses[date] += abs(pnl)
 
-    def get_risk_metrics(self, positions: List[Position]) -> Dict[str, any]:
+    def get_risk_metrics(self, positions: List[Position]) -> Dict[str, Any]:
         """Get current risk metrics."""
         try:
             total_exposure = sum(abs(p.amount * p.current_price) for p in positions)
@@ -246,13 +257,16 @@ class RiskManager(IRiskManager):
             max_symbol_exposure = max(symbol_exposure.values()) if symbol_exposure else Decimal('0')
             concentration_ratio = max_symbol_exposure / total_exposure if total_exposure > 0 else Decimal('0')
 
+            portfolio_value = Decimal(str(self._get_config("portfolio_value")))
+            risk_utilization = total_exposure / portfolio_value if portfolio_value > 0 else Decimal('0')
+
             return {
                 "total_positions": len(positions),
                 "total_exposure": float(total_exposure),
                 "total_pnl": float(total_pnl),
                 "daily_loss": float(daily_loss),
                 "concentration_ratio": float(concentration_ratio),
-                "risk_utilization": float(total_exposure / Decimal('10000')),  # Assuming $10k portfolio
+                "risk_utilization": float(risk_utilization),
                 "largest_position": float(max_symbol_exposure),
                 "symbol_distribution": {k: float(v) for k, v in symbol_exposure.items()}
             }
@@ -305,7 +319,8 @@ class RiskManager(IRiskManager):
             warnings.append("High portfolio utilization - over 80% of capital at risk")
 
         # Check daily losses
-        daily_loss_pct = metrics.get("daily_loss", 0) / 10000  # Assuming $10k portfolio
+        portfolio_value = float(self._get_config("portfolio_value"))
+        daily_loss_pct = metrics.get("daily_loss", 0) / portfolio_value if portfolio_value > 0 else 0
         if daily_loss_pct > 0.03:
             risk_level = "HIGH"
             warnings.append("High daily losses - over 3% of portfolio")

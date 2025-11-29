@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from loguru import logger
 
-from ..utils.exceptions import SecurityError, ConfigurationError
+from ..core.exceptions import SecurityError, ConfigurationError
 
 
 class SecureCredentialManager:

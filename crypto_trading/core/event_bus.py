@@ -10,7 +10,7 @@ from datetime import datetime
 from loguru import logger
 
 from .interfaces import IEventBus, Event, EventType
-from ..utils.exceptions import TradingSystemError
+from ..core.exceptions import TradingSystemError
 
 
 class EventBus(IEventBus):
@@ -70,7 +70,14 @@ class EventBus(IEventBus):
                 tasks.append(task)
 
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Check for exceptions and log them properly
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        callback_name = subscribers[i].__name__ if hasattr(subscribers[i], '__name__') else str(subscribers[i])
+                        logger.error(f"Event callback '{callback_name}' failed for event {event.type.value}: {result}")
+                        await self._handle_callback_error(result, callback_name, event)
 
             logger.debug(f"Published event {event.type.value} to {len(subscribers)} subscribers")
 
@@ -89,6 +96,29 @@ class EventBus(IEventBus):
 
         except Exception as e:
             logger.error(f"Error in event callback {callback.__name__}: {e}")
+            raise  # Re-raise to be caught by gather
+
+    async def _handle_callback_error(self, error: Exception, callback_name: str, event: Event) -> None:
+        """Handle errors that occur in event callbacks."""
+        try:
+            # Publish error event if it's not already an error event to avoid loops
+            if event.type != EventType.ERROR_OCCURRED:
+                error_event = Event(
+                    type=EventType.ERROR_OCCURRED,
+                    data={
+                        "error": str(error),
+                        "source": f"event_callback_{callback_name}",
+                        "original_event_type": event.type.value,
+                        "callback": callback_name
+                    },
+                    timestamp=datetime.now()
+                )
+                # Add to history only, don't publish to avoid cascading errors
+                self._add_to_history(error_event)
+
+        except Exception as e:
+            # If even error handling fails, just log it
+            logger.critical(f"Failed to handle callback error: {e}")
 
     def _add_to_history(self, event: Event) -> None:
         """Add event to history with size management."""

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from ...core.interfaces import IDataCollector, IExchangeClient, MarketData
-from ...utils.exceptions import DataCollectionError
+from ...core.exceptions import DataCollectionError
 
 
 class MarketDataCollector(IDataCollector):

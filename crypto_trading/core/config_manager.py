@@ -11,7 +11,7 @@ from datetime import datetime
 from loguru import logger
 
 from .interfaces import IConfigManager
-from ..utils.exceptions import ConfigurationError
+from ..core.exceptions import ConfigurationError
 
 
 class ConfigManager(IConfigManager):

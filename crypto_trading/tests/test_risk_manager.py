@@ -10,7 +10,7 @@ from crypto_trading.core.risk_manager import RiskManager
 from crypto_trading.core.interfaces import (
     Order, Position, TradingSignal, OrderType, OrderSide, OrderStatus
 )
-from crypto_trading.utils.exceptions import RiskManagementError
+from crypto_trading.core.exceptions import RiskManagementError
 
 
 class TestRiskManager:

@@ -14,7 +14,8 @@ from .interfaces import (
     Order, OrderStatus, Position, IExchangeClient, IEventBus,
     Event, EventType
 )
-from ..utils.exceptions import OrderError, TradingSystemError
+from .exceptions import OrderError, TradingSystemError
+from .constants import DEFAULT_ORDER_TIMEOUT_SECONDS, MAX_ORDER_RETRIES
 
 
 class OrderState(Enum):
@@ -33,7 +34,7 @@ class OrderState(Enum):
 class ManagedOrder:
     """Enhanced order with lifecycle tracking."""
 
-    def __init__(self, order: Order, timeout_seconds: int = 300):
+    def __init__(self, order: Order, timeout_seconds: int = DEFAULT_ORDER_TIMEOUT_SECONDS):
         self.order = order
         self.state = OrderState.CREATED
         self.created_at = datetime.now()
@@ -43,7 +44,7 @@ class ManagedOrder:
         self.fill_history: List[Dict] = []
         self.state_history: List[Dict] = []
         self.retry_count = 0
-        self.max_retries = 3
+        self.max_retries = MAX_ORDER_RETRIES
 
         self._add_state_change(OrderState.CREATED)
 
@@ -171,7 +172,7 @@ class OrderManager:
         await self._cancel_all_active_orders()
         logger.info("OrderManager stopped")
 
-    async def submit_order(self, order: Order, timeout_seconds: int = 300) -> str:
+    async def submit_order(self, order: Order, timeout_seconds: int = DEFAULT_ORDER_TIMEOUT_SECONDS) -> str:
         """Submit an order with lifecycle tracking."""
         managed_order = ManagedOrder(order, timeout_seconds)
 

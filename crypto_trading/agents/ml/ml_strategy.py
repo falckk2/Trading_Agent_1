@@ -10,13 +10,15 @@ import joblib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime, timedelta
+from decimal import Decimal
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 import logging
 
 from ...core.interfaces import IStrategy
-from ...core.models import MarketData, TradingSignal, SignalType
+from ...core.models import MarketData, TradingSignal, SignalType, OrderSide
 from ...core.exceptions import StrategyException
+from ...core.constants import SIGNAL_THRESHOLD_POSITIVE, SIGNAL_THRESHOLD_NEGATIVE
 from ...data.preprocessing.data_preprocessor import DataPreprocessor
 
 
@@ -378,10 +380,10 @@ class MLStrategy(IStrategy, ABC):
         confidence = 0.0
 
         # Convert prediction to signal (assuming prediction is price return)
-        if pred_value > 0.001:  # Positive return threshold
+        if pred_value > SIGNAL_THRESHOLD_POSITIVE:
             signal_type = SignalType.BUY
             strength = min(1.0, abs(pred_value) * self.signal_strength_multiplier)
-        elif pred_value < -0.001:  # Negative return threshold
+        elif pred_value < SIGNAL_THRESHOLD_NEGATIVE:
             signal_type = SignalType.SELL
             strength = min(1.0, abs(pred_value) * self.signal_strength_multiplier)
 
@@ -391,18 +393,33 @@ class MLStrategy(IStrategy, ABC):
             model_confidence = (self.validation_score + self.training_score) / 2
             confidence = base_confidence * model_confidence
 
+        # Map SignalType to OrderSide
+        if signal_type == SignalType.BUY:
+            action = OrderSide.BUY
+        elif signal_type == SignalType.SELL:
+            action = OrderSide.SELL
+        else:  # HOLD
+            action = OrderSide.BUY  # Default for neutral signals
+
         return TradingSignal(
             symbol=current_data.symbol,
-            signal_type=signal_type,
-            strength=strength,
-            price=current_data.close,
-            strategy_name=self.name,
+            action=action,
             confidence=confidence,
+            price=current_data.close,
+            amount=None,  # Will be calculated by position sizing
+            timestamp=datetime.now(),
             metadata={
+                "signal_type": signal_type.value,
+                "strength": strength,
+                "strategy_name": self.name,
                 "prediction": pred_value,
                 "model_score": self.validation_score,
                 "features_used": len(self.feature_columns) if self.feature_columns else 0
-            }
+            },
+            # Keep legacy fields for backward compatibility
+            signal_type=signal_type,
+            strength=strength,
+            strategy_name=self.name
         )
 
     def _create_hold_signal(self, current_data: Optional[MarketData]) -> TradingSignal:
@@ -410,21 +427,30 @@ class MLStrategy(IStrategy, ABC):
         if not current_data:
             return TradingSignal(
                 symbol="UNKNOWN",
+                action=OrderSide.BUY,  # Default action for HOLD
+                confidence=0.0,
+                price=Decimal('0.0'),
+                amount=None,
+                timestamp=datetime.now(),
+                metadata={"reason": "no_data"},
+                # Keep legacy fields for backward compatibility
                 signal_type=SignalType.HOLD,
                 strength=0.0,
-                price=0.0,
-                strategy_name=self.name,
-                confidence=0.0
+                strategy_name=self.name
             )
 
         return TradingSignal(
             symbol=current_data.symbol,
+            action=OrderSide.BUY,  # Default action for HOLD
+            confidence=1.0,
+            price=current_data.close,
+            amount=None,
+            timestamp=datetime.now(),
+            metadata={"reason": "model_not_trained"},
+            # Keep legacy fields for backward compatibility
             signal_type=SignalType.HOLD,
             strength=0.0,
-            price=current_data.close,
-            strategy_name=self.name,
-            confidence=1.0,
-            metadata={"reason": "model_not_trained"}
+            strategy_name=self.name
         )
 
     def get_feature_importance(self) -> Optional[Dict[str, float]]:

@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 
 from ...core.interfaces import MarketData
-from ...utils.exceptions import DataError
+from ...core.exceptions import DataError
 
 
 class DataStorageManager:

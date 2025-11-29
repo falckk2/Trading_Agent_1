@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from crypto_trading.core.config_manager import ConfigManager
-from crypto_trading.utils.exceptions import ConfigurationError
+from crypto_trading.core.exceptions import ConfigurationError
 
 
 class TestConfigManager:

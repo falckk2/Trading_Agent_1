@@ -8,7 +8,15 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional, Any
-from pydantic import BaseModel, Field
+
+# Pydantic is optional - only used for PerformanceMetrics
+try:
+    from pydantic import BaseModel, Field
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    BaseModel = object
+    Field = lambda *args, **kwargs: None
 
 
 class OrderType(Enum):
@@ -56,14 +64,14 @@ class MarketData:
     """Market data for a specific symbol and timestamp."""
     symbol: str
     timestamp: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    bid: Optional[float] = None
-    ask: Optional[float] = None
-    spread: Optional[float] = None
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    bid: Optional[Decimal] = None
+    ask: Optional[Decimal] = None
+    spread: Optional[Decimal] = None
 
     def __post_init__(self):
         if self.bid and self.ask:
@@ -78,24 +86,24 @@ class MarketData:
 @dataclass
 class Order:
     """Represents a trading order."""
+    id: str
     symbol: str
     side: OrderSide
-    order_type: OrderType
-    quantity: float
-    price: Optional[float] = None
-    stop_price: Optional[float] = None
-    order_id: Optional[str] = None
-    status: OrderStatus = OrderStatus.PENDING
-    timestamp: datetime = field(default_factory=datetime.now)
-    filled_quantity: float = 0.0
-    average_price: float = 0.0
-    fees: float = 0.0
+    type: OrderType
+    amount: Decimal
+    price: Optional[Decimal]
+    status: OrderStatus
+    timestamp: datetime
+    filled_amount: Decimal = Decimal('0')
+    average_price: Optional[Decimal] = None
+    stop_price: Optional[Decimal] = None
+    fees: Decimal = Decimal('0')
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.order_type == OrderType.LIMIT and self.price is None:
+        if self.type == OrderType.LIMIT and self.price is None:
             raise ValueError("Limit orders require a price")
-        if self.order_type in [OrderType.STOP, OrderType.STOP_LIMIT] and self.stop_price is None:
+        if self.type in [OrderType.STOP, OrderType.STOP_LIMIT] and self.stop_price is None:
             raise ValueError("Stop orders require a stop price")
 
     @property
@@ -109,9 +117,9 @@ class Order:
         return self.status in [OrderStatus.PENDING, OrderStatus.OPEN]
 
     @property
-    def remaining_quantity(self) -> float:
-        """Calculate remaining quantity to be filled."""
-        return self.quantity - self.filled_quantity
+    def remaining_amount(self) -> Decimal:
+        """Calculate remaining amount to be filled."""
+        return self.amount - self.filled_amount
 
 
 @dataclass
@@ -119,21 +127,21 @@ class Trade:
     """Represents an executed trade."""
     symbol: str
     side: OrderSide
-    quantity: float
-    price: float
+    quantity: Decimal
+    price: Decimal
     timestamp: datetime
     order_id: str
     trade_id: Optional[str] = None
-    fees: float = 0.0
-    commission: float = 0.0
+    fees: Decimal = Decimal('0')
+    commission: Decimal = Decimal('0')
 
     @property
-    def value(self) -> float:
+    def value(self) -> Decimal:
         """Calculate trade value."""
         return self.quantity * self.price
 
     @property
-    def net_value(self) -> float:
+    def net_value(self) -> Decimal:
         """Calculate net trade value after fees."""
         return self.value - self.fees - self.commission
 
@@ -142,76 +150,80 @@ class Trade:
 class Position:
     """Represents a trading position."""
     symbol: str
-    quantity: float
-    average_price: float
-    current_price: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.now)
-    realized_pnl: float = 0.0
-    fees_paid: float = 0.0
+    side: OrderSide
+    amount: Decimal
+    entry_price: Decimal
+    current_price: Decimal
+    pnl: Decimal
+    timestamp: datetime
+    realized_pnl: Decimal = Decimal('0')
+    fees_paid: Decimal = Decimal('0')
 
     @property
-    def market_value(self) -> float:
+    def market_value(self) -> Decimal:
         """Calculate current market value."""
-        return abs(self.quantity) * self.current_price
+        return abs(self.amount) * self.current_price
 
     @property
-    def unrealized_pnl(self) -> float:
+    def unrealized_pnl(self) -> Decimal:
         """Calculate unrealized P&L."""
-        if self.quantity == 0:
-            return 0.0
+        if self.amount == 0:
+            return Decimal('0')
 
-        if self.quantity > 0:  # Long position
-            return (self.current_price - self.average_price) * self.quantity
+        if self.side == OrderSide.BUY:  # Long position
+            return (self.current_price - self.entry_price) * self.amount
         else:  # Short position
-            return (self.average_price - self.current_price) * abs(self.quantity)
+            return (self.entry_price - self.current_price) * self.amount
 
     @property
-    def total_pnl(self) -> float:
+    def total_pnl(self) -> Decimal:
         """Calculate total P&L (realized + unrealized)."""
         return self.realized_pnl + self.unrealized_pnl
 
     @property
     def is_long(self) -> bool:
         """Check if position is long."""
-        return self.quantity > 0
+        return self.side == OrderSide.BUY
 
     @property
     def is_short(self) -> bool:
         """Check if position is short."""
-        return self.quantity < 0
+        return self.side == OrderSide.SELL
 
-    def update_price(self, new_price: float) -> None:
+    def update_price(self, new_price: Decimal) -> None:
         """Update current price for position."""
         self.current_price = new_price
+        # Recalculate pnl
+        self.pnl = self.unrealized_pnl
 
 
 @dataclass
 class Portfolio:
     """Represents a trading portfolio."""
-    cash: float
+    cash: Decimal
     positions: Dict[str, Position] = field(default_factory=dict)
-    total_fees: float = 0.0
+    total_fees: Decimal = Decimal('0')
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
     @property
-    def total_value(self) -> float:
+    def total_value(self) -> Decimal:
         """Calculate total portfolio value."""
         positions_value = sum(pos.market_value for pos in self.positions.values())
         return self.cash + positions_value
 
     @property
-    def total_pnl(self) -> float:
+    def total_pnl(self) -> Decimal:
         """Calculate total portfolio P&L."""
         return sum(pos.total_pnl for pos in self.positions.values())
 
     @property
-    def unrealized_pnl(self) -> float:
+    def unrealized_pnl(self) -> Decimal:
         """Calculate total unrealized P&L."""
         return sum(pos.unrealized_pnl for pos in self.positions.values())
 
     @property
-    def realized_pnl(self) -> float:
+    def realized_pnl(self) -> Decimal:
         """Calculate total realized P&L."""
         return sum(pos.realized_pnl for pos in self.positions.values())
 
@@ -235,27 +247,38 @@ class Portfolio:
 class TradingSignal:
     """Represents a trading signal generated by a strategy."""
     symbol: str
-    signal_type: SignalType
-    strength: float  # Signal strength between 0 and 1
-    price: float
-    timestamp: datetime = field(default_factory=datetime.now)
+    action: OrderSide
+    confidence: float
+    price: Optional[Decimal]
+    amount: Optional[Decimal]
+    timestamp: datetime
+    metadata: Dict[str, Any]
+    # Legacy fields for compatibility
+    signal_type: Optional[SignalType] = None
+    strength: float = 0.0
     strategy_name: str = "unknown"
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    confidence: float = 0.0  # Confidence level between 0 and 1
-    target_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    target_price: Optional[Decimal] = None
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
 
     def __post_init__(self):
-        if not 0 <= self.strength <= 1:
-            raise ValueError("Signal strength must be between 0 and 1")
         if not 0 <= self.confidence <= 1:
             raise ValueError("Confidence must be between 0 and 1")
+        if self.strength and not 0 <= self.strength <= 1:
+            raise ValueError("Signal strength must be between 0 and 1")
+        # Map action to signal_type if not set
+        if self.signal_type is None:
+            if self.action == OrderSide.BUY:
+                self.signal_type = SignalType.BUY
+            elif self.action == OrderSide.SELL:
+                self.signal_type = SignalType.SELL
+            else:
+                self.signal_type = SignalType.HOLD
 
     @property
     def is_actionable(self) -> bool:
         """Check if signal is strong enough to act upon."""
-        return self.strength >= 0.5 and self.confidence >= 0.3
+        return self.confidence >= 0.5
 
 
 class PerformanceMetrics(BaseModel):

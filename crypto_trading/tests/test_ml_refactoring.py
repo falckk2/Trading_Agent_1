@@ -32,7 +32,7 @@ sys.modules['sklearn.preprocessing'].StandardScaler = MagicMock()
 sys.modules['sklearn.metrics'].accuracy_score = MagicMock(return_value=0.85)
 
 from crypto_trading.core.interfaces import MarketData
-from crypto_trading.core.models import TradingSignal, SignalType
+from crypto_trading.core.models import TradingSignal, SignalType, OrderSide
 from crypto_trading.agents.ml.ml_strategy import MLStrategy
 from crypto_trading.agents.ml.random_forest_strategy import RandomForestStrategy
 from crypto_trading.agents.ml.random_forest_agent import RandomForestAgent
@@ -144,8 +144,9 @@ class TestMLStrategyRefactoring:
         mro = [cls.__name__ for cls in agent.__class__.__mro__]
         assert 'BaseMLAgent' not in mro
 
+    @pytest.mark.asyncio
     @patch('crypto_trading.agents.ml.random_forest_strategy.np')
-    def test_prediction_delegation(self, mock_np):
+    async def test_prediction_delegation(self, mock_np):
         """Test that agent analyze delegates to strategy."""
         # Setup mocks
         mock_np.ndarray = list
@@ -165,21 +166,29 @@ class TestMLStrategyRefactoring:
         ]
 
         agent = RandomForestAgent()
+        agent.initialize({})  # Initialize the agent
+
+        # Mock validation to bypass data requirements
+        agent._validate_market_data = Mock()
 
         # Mock the strategy's analyze method
         mock_signal = TradingSignal(
             symbol="BTC-USD",
+            action=OrderSide.BUY,
+            confidence=0.7,
+            price=Decimal("50500"),
+            amount=Decimal("0.1"),
+            timestamp=datetime.now(),
+            metadata={"strategy": "RandomForestStrategy"},
             signal_type=SignalType.BUY,
             strength=0.8,
-            price=50500,
-            strategy_name="RandomForestStrategy",
-            confidence=0.7
+            strategy_name="RandomForestStrategy"
         )
 
         agent.strategy.analyze = Mock(return_value=mock_signal)
 
         # Test delegation
-        result = agent.analyze(market_data)
+        result = await agent.analyze(market_data)
 
         # Verify strategy analyze was called
         agent.strategy.analyze.assert_called_once_with(market_data)

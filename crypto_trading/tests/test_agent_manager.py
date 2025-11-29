@@ -11,7 +11,7 @@ from crypto_trading.core.agent_manager import AgentManager
 from crypto_trading.core.interfaces import MarketData, TradingSignal, OrderSide
 from crypto_trading.agents.technical.rsi_agent import RSIAgent
 from crypto_trading.agents.technical.macd_agent import MACDAgent
-from crypto_trading.utils.exceptions import AgentNotFoundError, AgentInitializationError
+from crypto_trading.core.exceptions import AgentNotFoundError, AgentInitializationError
 
 
 class TestAgentManager:
@@ -63,7 +63,8 @@ class TestAgentManager:
 
     def test_register_agent_with_invalid_config(self, agent_manager, rsi_agent):
         """Test agent registration with invalid config."""
-        invalid_config = {}  # Missing required parameters
+        # Invalid config that will cause initialization to fail
+        invalid_config = {"rsi_period": -10}  # Negative period should be invalid
 
         with pytest.raises(AgentInitializationError):
             agent_manager.register_agent(rsi_agent, invalid_config)

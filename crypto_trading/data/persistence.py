@@ -16,7 +16,8 @@ from loguru import logger
 
 from ..core.interfaces import Order, Position, MarketData, TradingSignal, OrderSide, OrderType, OrderStatus
 from ..core.portfolio_tracker import TradeRecord, PortfolioSnapshot, PerformanceMetrics
-from ..utils.exceptions import DataError as DataException
+from ..core.exceptions import DataError as DataException
+from ..utils.decorators import requires_connection, retry_on_failure, handle_trading_errors
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -231,63 +232,53 @@ class TradingDataPersistence:
 
         await self._connection.commit()
 
+    @requires_connection
+    @retry_on_failure(max_retries=3, delay=0.5)
     async def save_order(self, order: Order) -> None:
         """Save order to database."""
-        await self._ensure_connection()
+        await self._connection.execute("""
+            INSERT OR REPLACE INTO orders
+            (id, symbol, side, type, amount, price, status, filled_amount, average_price, timestamp, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            order.id,
+            order.symbol,
+            order.side.value,
+            order.type.value,
+            float(order.amount),
+            float(order.price) if order.price else None,
+            order.status.value,
+            float(order.filled_amount),
+            float(order.average_price) if order.average_price else None,
+            order.timestamp.isoformat(),
+            json.dumps(asdict(order), cls=DecimalEncoder)
+        ))
 
-        try:
-            await self._connection.execute("""
-                INSERT OR REPLACE INTO orders
-                (id, symbol, side, type, amount, price, status, filled_amount, average_price, timestamp, data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                order.id,
-                order.symbol,
-                order.side.value,
-                order.type.value,
-                float(order.amount),
-                float(order.price) if order.price else None,
-                order.status.value,
-                float(order.filled_amount),
-                float(order.average_price) if order.average_price else None,
-                order.timestamp.isoformat(),
-                json.dumps(asdict(order), cls=DecimalEncoder)
-            ))
+        await self._connection.commit()
+        logger.debug(f"Saved order {order.id} to database")
 
-            await self._connection.commit()
-            logger.debug(f"Saved order {order.id} to database")
-
-        except Exception as e:
-            logger.error(f"Failed to save order {order.id}: {e}")
-            raise DataException(f"Failed to save order: {e}")
-
+    @requires_connection
+    @retry_on_failure(max_retries=3, delay=0.5)
     async def save_trade(self, trade: TradeRecord) -> None:
         """Save trade record to database."""
-        await self._ensure_connection()
-
-        try:
-            await self._connection.execute("""
-                INSERT INTO trades
-                (order_id, symbol, side, quantity, price, value, fees, pnl, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                trade.order_id,
-                trade.symbol,
-                trade.side.value,
-                float(trade.quantity),
-                float(trade.price),
-                float(trade.value),
+        await self._connection.execute("""
+            INSERT INTO trades
+            (order_id, symbol, side, quantity, price, value, fees, pnl, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trade.order_id,
+            trade.symbol,
+            trade.side.value,
+            float(trade.quantity),
+            float(trade.price),
+            float(trade.value),
                 float(trade.fees),
-                float(trade.pnl) if trade.pnl else None,
-                trade.timestamp.isoformat()
-            ))
+            float(trade.pnl) if trade.pnl else None,
+            trade.timestamp.isoformat()
+        ))
 
-            await self._connection.commit()
-            logger.debug(f"Saved trade {trade.order_id} to database")
-
-        except Exception as e:
-            logger.error(f"Failed to save trade {trade.order_id}: {e}")
-            raise DataException(f"Failed to save trade: {e}")
+        await self._connection.commit()
+        logger.debug(f"Saved trade {trade.order_id} to database")
 
     async def save_position(self, position: Position, is_active: bool = True) -> None:
         """Save position to database."""

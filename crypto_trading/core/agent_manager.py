@@ -7,11 +7,11 @@ from typing import Dict, List, Optional, Any
 from loguru import logger
 from datetime import datetime
 
-from .interfaces import ITradingAgent, TradingSignal, MarketData
-from ..utils.exceptions import AgentNotFoundError, AgentInitializationError
+from .interfaces import IAgentManager, ITradingAgent, TradingSignal, MarketData
+from ..core.exceptions import AgentNotFoundError, AgentInitializationError
 
 
-class AgentManager:
+class AgentManager(IAgentManager):
     """Manages multiple trading agents with easy switching capability."""
 
     def __init__(self):
@@ -49,13 +49,14 @@ class AgentManager:
 
         logger.info(f"Agent '{agent_name}' unregistered")
 
-    def set_active_agent(self, agent_name: str) -> None:
+    def set_active_agent(self, agent_name: str) -> bool:
         """Set the active trading agent."""
         if agent_name not in self._agents:
             raise AgentNotFoundError(f"Agent '{agent_name}' not found")
 
         self._active_agent = agent_name
         logger.info(f"Active agent set to '{agent_name}'")
+        return True
 
     def get_active_agent(self) -> Optional[ITradingAgent]:
         """Get the currently active trading agent."""

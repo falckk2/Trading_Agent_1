@@ -11,11 +11,12 @@ from decimal import Decimal
 
 from .interfaces import (
     IExchangeClient, ITradingAgent, IRiskManager, IEventBus, IConfigManager,
-    MarketData, Order, Position, TradingSignal, OrderStatus, OrderSide, OrderType,
+    IAgentManager, MarketData, Order, Position, TradingSignal, OrderStatus, OrderSide, OrderType,
     Event, EventType
 )
-from .agent_manager import AgentManager
-from ..utils.exceptions import TradingSystemError, RiskManagementError
+from .order_executor import OrderExecutor, ImmediateExecutionStrategy, SignalExecutionStrategy
+from .account_state_manager import AccountStateManager
+from ..core.exceptions import TradingSystemError, RiskManagementError
 
 
 class TradingEngine:
@@ -26,19 +27,25 @@ class TradingEngine:
         exchange_client: IExchangeClient,
         risk_manager: IRiskManager,
         event_bus: IEventBus,
-        config_manager: IConfigManager
+        config_manager: IConfigManager,
+        agent_manager: IAgentManager,
+        execution_strategy: Optional[SignalExecutionStrategy] = None
     ):
         self.exchange_client = exchange_client
         self.risk_manager = risk_manager
         self.event_bus = event_bus
         self.config_manager = config_manager
-        self.agent_manager = AgentManager()
+        self.agent_manager = agent_manager
+
+        # Initialize order executor
+        self.order_executor = OrderExecutor(exchange_client, risk_manager)
+        self.execution_strategy = execution_strategy or ImmediateExecutionStrategy()
+
+        # Initialize account state manager
+        self.account_state_manager = AccountStateManager(exchange_client, event_bus)
 
         self._is_running = False
         self._trading_enabled = False
-        self._positions: List[Position] = []
-        self._active_orders: Dict[str, Order] = {}
-        self._balance: Dict[str, Decimal] = {}
 
         self._setup_event_handlers()
 
@@ -62,7 +69,7 @@ class TradingEngine:
                 raise TradingSystemError("Failed to connect to exchange")
 
             # Load initial data
-            await self._update_account_info()
+            await self.account_state_manager.update_account_info()
 
             self._is_running = True
             logger.info("Trading engine started successfully")
@@ -128,7 +135,7 @@ class TradingEngine:
     async def _execute_trading_cycle(self) -> None:
         """Execute one trading cycle."""
         # Update account information
-        await self._update_account_info()
+        await self.account_state_manager.update_account_info()
 
         # Get active agent
         active_agent = self.agent_manager.get_active_agent()
@@ -193,94 +200,38 @@ class TradingEngine:
             return []
 
     async def _execute_signal(self, signal: TradingSignal) -> None:
-        """Execute a trading signal."""
+        """Execute a trading signal using the order executor."""
         try:
-            # Calculate position size
-            position_size = self.risk_manager.calculate_position_size(signal, self._balance)
-            if position_size <= 0:
-                logger.warning(f"Invalid position size calculated: {position_size}")
-                return
+            # Get current balance and positions
+            balance = self.account_state_manager.get_balance()
+            positions = self.account_state_manager.get_positions()
 
-            # Create order
-            order = Order(
-                id="",  # Will be set by exchange
-                symbol=signal.symbol,
-                side=signal.action,
-                type=OrderType.MARKET if signal.price is None else OrderType.LIMIT,
-                amount=position_size,
-                price=signal.price,
-                status=OrderStatus.PENDING,
-                timestamp=datetime.now()
+            # Execute signal using strategy pattern
+            placed_order = await self.execution_strategy.execute(
+                signal,
+                self.order_executor,
+                balance,
+                positions
             )
 
-            # Validate order with risk manager
-            if not self.risk_manager.validate_order(order, self._positions):
-                logger.warning(f"Order rejected by risk manager: {order}")
-                return
+            # Track the order
+            self.account_state_manager.add_active_order(placed_order)
 
-            # Place order
-            placed_order = await self.exchange_client.place_order(order)
-            self._active_orders[placed_order.id] = placed_order
-
-            logger.info(f"Order placed: {placed_order}")
-
+        except TradingSystemError as e:
+            logger.warning(f"Signal execution skipped: {e}")
         except Exception as e:
             logger.error(f"Failed to execute signal: {e}")
             raise
 
-    async def _update_account_info(self) -> None:
-        """Update account information."""
-        try:
-            # Update balance
-            self._balance = await self.exchange_client.get_balance()
-
-            # Update positions
-            self._positions = await self.exchange_client.get_positions()
-
-            # Update active orders status
-            await self._update_order_statuses()
-
-        except Exception as e:
-            logger.error(f"Failed to update account info: {e}")
-
-    async def _update_order_statuses(self) -> None:
-        """Update status of active orders."""
-        orders_to_remove = []
-
-        for order_id, order in self._active_orders.items():
-            try:
-                updated_order = await self.exchange_client.get_order_status(order_id)
-                self._active_orders[order_id] = updated_order
-
-                # Remove completed orders
-                if updated_order.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED]:
-                    orders_to_remove.append(order_id)
-
-                    if updated_order.status == OrderStatus.FILLED:
-                        await self.event_bus.publish(
-                            Event(
-                                type=EventType.ORDER_FILLED,
-                                data={"order": updated_order},
-                                timestamp=datetime.now()
-                            )
-                        )
-
-            except Exception as e:
-                logger.error(f"Failed to update order status for {order_id}: {e}")
-
-        # Remove completed orders
-        for order_id in orders_to_remove:
-            del self._active_orders[order_id]
-
     async def _cancel_all_orders(self) -> None:
         """Cancel all active orders."""
-        for order_id in list(self._active_orders.keys()):
+        for order_id in self.account_state_manager.get_active_orders():
             try:
-                await self.exchange_client.cancel_order(order_id)
+                await self.exchange_client.cancel_order(order_id.id)
             except Exception as e:
-                logger.error(f"Failed to cancel order {order_id}: {e}")
+                logger.error(f"Failed to cancel order {order_id.id}: {e}")
 
-        self._active_orders.clear()
+        self.account_state_manager.clear_active_orders()
 
     async def _handle_order_filled(self, event: Event) -> None:
         """Handle order filled event."""
@@ -308,24 +259,29 @@ class TradingEngine:
 
     def get_status(self) -> Dict[str, Any]:
         """Get current system status."""
+        active_agent = self.agent_manager.get_active_agent()
+        active_agent_name = active_agent.get_name() if active_agent else None
+
+        balance = self.account_state_manager.get_balance()
+
         return {
             "is_running": self._is_running,
             "trading_enabled": self._trading_enabled,
-            "active_agent": self.agent_manager._active_agent,
-            "active_orders": len(self._active_orders),
-            "positions": len(self._positions),
-            "balance": {k: float(v) for k, v in self._balance.items()},
+            "active_agent": active_agent_name,
+            "active_orders": self.account_state_manager.get_active_order_count(),
+            "positions": len(self.account_state_manager.get_positions()),
+            "balance": {k: float(v) for k, v in balance.items()},
             "timestamp": datetime.now().isoformat()
         }
 
     def get_positions(self) -> List[Position]:
         """Get current positions."""
-        return self._positions.copy()
+        return self.account_state_manager.get_positions()
 
     def get_active_orders(self) -> List[Order]:
         """Get active orders."""
-        return list(self._active_orders.values())
+        return self.account_state_manager.get_active_orders()
 
     def get_balance(self) -> Dict[str, Decimal]:
         """Get account balance."""
-        return self._balance.copy()
+        return self.account_state_manager.get_balance()

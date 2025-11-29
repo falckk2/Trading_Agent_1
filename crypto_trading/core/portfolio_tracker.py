@@ -12,7 +12,8 @@ from enum import Enum
 from loguru import logger
 
 from .interfaces import Position, Order, MarketData, OrderSide, IExchangeClient
-from ..utils.exceptions import TradingSystemError
+from ..core.exceptions import TradingSystemError
+from ..utils.decorators import handle_errors, handle_operation_failure, suppress_errors
 
 
 class PerformancePeriod(Enum):
@@ -155,44 +156,39 @@ class PortfolioTracker:
 
         logger.info("PortfolioTracker stopped")
 
+    @handle_operation_failure("initialize portfolio")
     async def _initialize_portfolio(self) -> None:
         """Initialize portfolio state from exchange."""
-        try:
-            # Get current balance
-            balance = await self.exchange_client.get_balance()
-            self.cash_balance.update(balance)
+        # Get current balance
+        balance = await self.exchange_client.get_balance()
+        self.cash_balance.update(balance)
 
-            # Get current positions
-            positions = await self.exchange_client.get_positions()
-            for position in positions:
-                self.positions[position.symbol] = position
+        # Get current positions
+        positions = await self.exchange_client.get_positions()
+        for position in positions:
+            self.positions[position.symbol] = position
 
-            # Take initial snapshot
-            await self._take_snapshot()
+        # Take initial snapshot
+        await self._take_snapshot()
 
-            # Set daily start value
-            current_value = await self.get_total_portfolio_value()
-            if self._daily_start_value is None:
-                self._daily_start_value = current_value
-            if self._session_start_value is None:
-                self._session_start_value = current_value
+        # Set daily start value
+        current_value = await self.get_total_portfolio_value()
+        if self._daily_start_value is None:
+            self._daily_start_value = current_value
+        if self._session_start_value is None:
+            self._session_start_value = current_value
 
-            logger.info(f"Portfolio initialized with value: {current_value}")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize portfolio: {e}")
-            raise TradingSystemError(f"Portfolio initialization failed: {e}")
+        logger.info(f"Portfolio initialized with value: {current_value}")
 
     async def _update_loop(self, interval: float) -> None:
         """Background task to update portfolio state."""
         while self._is_running:
             try:
                 await self.update_portfolio()
-                await asyncio.sleep(interval)
-
             except Exception as e:
                 logger.error(f"Error in portfolio update loop: {e}")
-                await asyncio.sleep(interval * 2)  # Wait longer before retrying
+
+            await asyncio.sleep(interval if not hasattr(self, '_last_error') else interval * 2)
 
     async def update_portfolio(self) -> None:
         """Update portfolio with latest data."""

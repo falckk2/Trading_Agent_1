@@ -8,11 +8,12 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
+from decimal import Decimal
 import logging
 
 from ..core.interfaces import IExchangeClient
-from ..core.interfaces import Order, MarketData, OrderStatus, OrderType
-from ..utils.exceptions import (
+from ..core.interfaces import Order, MarketData, OrderStatus, OrderType, Position
+from ..core.exceptions import (
     ExchangeError as ExchangeException,
     ConnectionError as ExchangeConnectionError,
     OrderError as ExchangeAPIError,
@@ -30,7 +31,7 @@ class BaseExchange(IExchangeClient):
         self.api_key = api_key
         self.api_secret = api_secret
         self.sandbox = sandbox
-        self.is_connected = False
+        self._connected = False
         self.rate_limit_delay = 0.1  # Default rate limiting
         self.logger = logging.getLogger(f"{self.__class__.__name__}")
 
@@ -49,7 +50,7 @@ class BaseExchange(IExchangeClient):
         try:
             await self._authenticate()
             await self._initialize_connection()
-            self.is_connected = True
+            self._connected = True
             self.logger.info(f"Connected to {self.__class__.__name__}")
             return True
         except Exception as e:
@@ -60,22 +61,27 @@ class BaseExchange(IExchangeClient):
         """Close connection to the exchange."""
         try:
             await self._cleanup_connection()
-            self.is_connected = False
+            self._connected = False
             self.logger.info(f"Disconnected from {self.__class__.__name__}")
         except Exception as e:
             self.logger.warning(f"Error during disconnect: {e}")
 
-    async def get_balance(self, asset: str) -> float:
-        """Get account balance for a specific asset."""
+    async def get_balance(self) -> Dict[str, Decimal]:
+        """Get account balance for all assets."""
         self._ensure_connected()
         try:
-            return await self._get_balance_impl(asset)
+            balances = await self._get_balance_impl()
+            # Convert to Decimal if not already
+            return {
+                asset: Decimal(str(balance)) if not isinstance(balance, Decimal) else balance
+                for asset, balance in balances.items()
+            }
         except Exception as e:
-            self.logger.error(f"Failed to get balance for {asset}: {e}")
+            self.logger.error(f"Failed to get balance: {e}")
             raise ExchangeAPIError(f"Balance retrieval failed: {e}")
 
-    async def place_order(self, order: Order) -> str:
-        """Place an order and return order ID."""
+    async def place_order(self, order: Order) -> Order:
+        """Place an order and return the updated order with exchange ID."""
         self._ensure_connected()
 
         # Validate order
@@ -85,8 +91,9 @@ class BaseExchange(IExchangeClient):
             order_id = await self._place_order_impl(order)
             order.order_id = order_id
             order.status = OrderStatus.OPEN
+            order.timestamp = datetime.now()
             self.logger.info(f"Order placed: {order_id}")
-            return order_id
+            return order
         except Exception as e:
             self.logger.error(f"Failed to place order: {e}")
             raise OrderException(f"Order placement failed: {e}")
@@ -102,7 +109,7 @@ class BaseExchange(IExchangeClient):
             self.logger.error(f"Failed to cancel order {order_id}: {e}")
             raise OrderException(f"Order cancellation failed: {e}")
 
-    async def get_order_status(self, order_id: str) -> Dict[str, Any]:
+    async def get_order_status(self, order_id: str) -> Order:
         """Get status of an order."""
         self._ensure_connected()
         try:
@@ -145,6 +152,19 @@ class BaseExchange(IExchangeClient):
             self.logger.error(f"Failed to get historical data: {e}")
             raise ExchangeAPIError(f"Historical data retrieval failed: {e}")
 
+    async def get_positions(self) -> List[Position]:
+        """Get current positions."""
+        self._ensure_connected()
+        try:
+            return await self._get_positions_impl()
+        except Exception as e:
+            self.logger.error(f"Failed to get positions: {e}")
+            raise ExchangeAPIError(f"Position retrieval failed: {e}")
+
+    def is_connected(self) -> bool:
+        """Check if connected to the exchange."""
+        return self._connected
+
     # Protected methods for subclasses to implement
 
     @abstractmethod
@@ -163,8 +183,8 @@ class BaseExchange(IExchangeClient):
         pass
 
     @abstractmethod
-    async def _get_balance_impl(self, asset: str) -> float:
-        """Implementation-specific balance retrieval."""
+    async def _get_balance_impl(self) -> Dict[str, Decimal]:
+        """Implementation-specific balance retrieval for all assets."""
         pass
 
     @abstractmethod
@@ -178,7 +198,7 @@ class BaseExchange(IExchangeClient):
         pass
 
     @abstractmethod
-    async def _get_order_status_impl(self, order_id: str) -> Dict[str, Any]:
+    async def _get_order_status_impl(self, order_id: str) -> Order:
         """Implementation-specific order status retrieval."""
         pass
 
@@ -199,11 +219,16 @@ class BaseExchange(IExchangeClient):
         """Implementation-specific historical data retrieval."""
         pass
 
+    @abstractmethod
+    async def _get_positions_impl(self) -> List[Position]:
+        """Implementation-specific positions retrieval."""
+        pass
+
     # Helper methods
 
     def _ensure_connected(self) -> None:
         """Ensure the exchange is connected."""
-        if not self.is_connected:
+        if not self._connected:
             raise ExchangeConnectionError("Not connected to exchange")
 
     def _validate_order(self, order: Order) -> None:

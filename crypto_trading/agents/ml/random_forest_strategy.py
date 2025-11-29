@@ -6,12 +6,13 @@ Uses Random Forest classifier for price direction prediction.
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Tuple, Union, Optional
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 import logging
 
 from .ml_strategy import MLStrategy
-from ...core.models import MarketData, TradingSignal, SignalType
+from ...core.models import MarketData, TradingSignal, SignalType, OrderSide
 from ...core.exceptions import StrategyException
 
 
@@ -254,19 +255,34 @@ class RandomForestStrategy(MLStrategy):
                 strength = 0.0
                 confidence = 0.0
 
+            # Map SignalType to OrderSide
+            if signal_type == SignalType.BUY:
+                action = OrderSide.BUY
+            elif signal_type == SignalType.SELL:
+                action = OrderSide.SELL
+            else:  # HOLD
+                action = OrderSide.BUY  # Default for neutral signals
+
             return TradingSignal(
                 symbol=current_data.symbol,
-                signal_type=signal_type,
-                strength=strength,
-                price=current_data.close,
-                strategy_name=self.name,
+                action=action,
                 confidence=confidence,
+                price=current_data.close,
+                amount=None,  # Will be calculated by position sizing
+                timestamp=datetime.now(),
                 metadata={
+                    "signal_type": signal_type.value,
+                    "strength": strength,
+                    "strategy_name": self.name,
                     "prediction_class": pred_class,
                     "model_confidence": confidence,
                     "model_type": "RandomForest",
                     "features_used": len(self.feature_columns) if self.feature_columns else 0
-                }
+                },
+                # Keep legacy fields for backward compatibility
+                signal_type=signal_type,
+                strength=strength,
+                strategy_name=self.name
             )
 
         except Exception as e:

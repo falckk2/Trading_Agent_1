@@ -33,6 +33,22 @@ class RSIAgent(BaseAgent):
             "use_divergence": False
         }
 
+    def _validate_config(self) -> None:
+        """Validate RSI-specific configuration."""
+        super()._validate_config()
+
+        rsi_period = self.config.get("rsi_period")
+        if rsi_period is not None and rsi_period <= 0:
+            raise ValueError(f"rsi_period must be positive, got {rsi_period}")
+
+        oversold = self.config.get("oversold_threshold")
+        if oversold is not None and (oversold < 0 or oversold > 100):
+            raise ValueError(f"oversold_threshold must be between 0 and 100, got {oversold}")
+
+        overbought = self.config.get("overbought_threshold")
+        if overbought is not None and (overbought < 0 or overbought > 100):
+            raise ValueError(f"overbought_threshold must be between 0 and 100, got {overbought}")
+
     def _get_minimum_data_points(self) -> int:
         return max(self._get_config_value("rsi_period", 14) + 5, 20)
 

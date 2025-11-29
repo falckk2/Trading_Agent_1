@@ -9,7 +9,7 @@ from datetime import datetime
 from loguru import logger
 
 from ..core.interfaces import ITradingAgent, MarketData, TradingSignal, OrderSide
-from ..utils.exceptions import AgentInitializationError
+from ..core.exceptions import AgentInitializationError
 
 
 class BaseAgent(ITradingAgent, ABC):
@@ -65,17 +65,28 @@ class BaseAgent(ITradingAgent, ABC):
         symbol: str,
         action: OrderSide,
         confidence: float,
-        price: Optional[float] = None,
-        amount: Optional[float] = None,
+        price: Optional[Any] = None,
+        amount: Optional[Any] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> TradingSignal:
         """Helper method to create trading signals."""
+        from decimal import Decimal
+
+        # Convert price and amount to Decimal if needed
+        price_decimal = None
+        if price is not None:
+            price_decimal = Decimal(str(price)) if not isinstance(price, Decimal) else price
+
+        amount_decimal = None
+        if amount is not None:
+            amount_decimal = Decimal(str(amount)) if not isinstance(amount, Decimal) else amount
+
         return TradingSignal(
             symbol=symbol,
             action=action,
             confidence=max(0.0, min(1.0, confidence)),  # Clamp between 0 and 1
-            price=price,
-            amount=amount,
+            price=price_decimal,
+            amount=amount_decimal,
             timestamp=datetime.now(),
             metadata=metadata or {}
         )
@@ -119,3 +130,16 @@ class BaseAgent(ITradingAgent, ABC):
         if not market_data:
             raise ValueError("No market data provided")
         return market_data[0].symbol
+
+    def _create_neutral_signal(self, market_data: List[MarketData]) -> TradingSignal:
+        """Create a neutral/hold signal."""
+        symbol = self._get_symbol_from_data(market_data) if market_data else "UNKNOWN"
+        price = market_data[-1].close if market_data else 0
+        return self._create_signal(
+            symbol=symbol,
+            action=OrderSide.BUY,
+            confidence=0.0,
+            price=price,
+            amount=None,
+            metadata={"reason": "error_fallback"}
+        )

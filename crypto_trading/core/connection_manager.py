@@ -11,7 +11,7 @@ from enum import Enum
 from loguru import logger
 
 from .interfaces import IExchangeClient
-from ..utils.exceptions import ConnectionError, TradingSystemError
+from ..core.exceptions import ConnectionError, TradingSystemError
 
 
 class ConnectionState(Enum):

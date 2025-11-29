@@ -4,84 +4,23 @@ Following SOLID principles for modular and extensible design.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Protocol
+from typing import Dict, List, Optional, Any, Protocol, Callable, Awaitable
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from dataclasses import dataclass
-from decimal import Decimal
+
+# Import data models from models.py to avoid duplication
+from .models import (
+    OrderType, OrderSide, OrderStatus, SignalType,
+    MarketData, Order, Position, TradingSignal
+)
 
 
-class OrderType(Enum):
-    MARKET = "market"
-    LIMIT = "limit"
-    STOP = "stop"
-    STOP_LIMIT = "stop_limit"
+# Split interfaces following Interface Segregation Principle
 
-
-class OrderSide(Enum):
-    BUY = "buy"
-    SELL = "sell"
-
-
-class OrderStatus(Enum):
-    PENDING = "pending"
-    OPEN = "open"
-    FILLED = "filled"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
-
-
-@dataclass
-class MarketData:
-    symbol: str
-    timestamp: datetime
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: Decimal
-    bid: Optional[Decimal] = None
-    ask: Optional[Decimal] = None
-
-
-@dataclass
-class Order:
-    id: str
-    symbol: str
-    side: OrderSide
-    type: OrderType
-    amount: Decimal
-    price: Optional[Decimal]
-    status: OrderStatus
-    timestamp: datetime
-    filled_amount: Decimal = Decimal('0')
-    average_price: Optional[Decimal] = None
-
-
-@dataclass
-class Position:
-    symbol: str
-    side: OrderSide
-    amount: Decimal
-    entry_price: Decimal
-    current_price: Decimal
-    pnl: Decimal
-    timestamp: datetime
-
-
-@dataclass
-class TradingSignal:
-    symbol: str
-    action: OrderSide
-    confidence: float
-    price: Optional[Decimal]
-    amount: Optional[Decimal]
-    timestamp: datetime
-    metadata: Dict[str, Any]
-
-
-class IExchangeClient(ABC):
-    """Interface for exchange client implementations."""
+class IExchangeConnection(ABC):
+    """Interface for exchange connection management."""
 
     @abstractmethod
     async def connect(self) -> bool:
@@ -92,6 +31,15 @@ class IExchangeClient(ABC):
     async def disconnect(self) -> None:
         """Close connection to the exchange."""
         pass
+
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """Check if connected to the exchange."""
+        pass
+
+
+class IMarketDataProvider(ABC):
+    """Interface for market data retrieval."""
 
     @abstractmethod
     async def get_market_data(self, symbol: str) -> MarketData:
@@ -109,9 +57,13 @@ class IExchangeClient(ABC):
         """Get historical market data."""
         pass
 
+
+class IOrderExecutor(ABC):
+    """Interface for order execution."""
+
     @abstractmethod
     async def place_order(self, order: Order) -> Order:
-        """Place a trading order."""
+        """Place a trading order. Returns the placed order with exchange ID."""
         pass
 
     @abstractmethod
@@ -124,6 +76,10 @@ class IExchangeClient(ABC):
         """Get the status of an order."""
         pass
 
+
+class IAccountDataProvider(ABC):
+    """Interface for account data retrieval."""
+
     @abstractmethod
     async def get_positions(self) -> List[Position]:
         """Get current positions."""
@@ -133,6 +89,15 @@ class IExchangeClient(ABC):
     async def get_balance(self) -> Dict[str, Decimal]:
         """Get account balance."""
         pass
+
+
+class IExchangeClient(IExchangeConnection, IMarketDataProvider, IOrderExecutor, IAccountDataProvider):
+    """
+    Complete exchange client interface.
+    Combines all exchange functionality for backward compatibility.
+    New code should use the specific interfaces above.
+    """
+    pass
 
 
 class IStrategy(ABC):
@@ -159,18 +124,34 @@ class IStrategy(ABC):
         pass
 
 
-class ITradingAgent(ABC):
-    """Interface for trading agent implementations."""
-
-    @abstractmethod
-    def initialize(self, config: Dict[str, Any]) -> None:
-        """Initialize the trading agent with configuration."""
-        pass
+class ISignalGenerator(ABC):
+    """Interface for signal generation (core responsibility)."""
 
     @abstractmethod
     async def analyze(self, market_data: List[MarketData]) -> TradingSignal:
         """Analyze market data and generate trading signals."""
         pass
+
+
+class IConfigurableAgent(ABC):
+    """Interface for agent configuration."""
+
+    @abstractmethod
+    def initialize(self, config: Dict[str, Any]) -> None:
+        """Initialize the agent with configuration."""
+        pass
+
+    @abstractmethod
+    def get_parameters(self) -> Dict[str, Any]:
+        """Get configurable parameters for the agent."""
+        pass
+
+
+class ITradingAgent(ISignalGenerator, IConfigurableAgent):
+    """
+    Complete trading agent interface.
+    Combines signal generation and configuration.
+    """
 
     @abstractmethod
     def get_name(self) -> str:
@@ -180,11 +161,6 @@ class ITradingAgent(ABC):
     @abstractmethod
     def get_description(self) -> str:
         """Get a description of the trading agent."""
-        pass
-
-    @abstractmethod
-    def get_parameters(self) -> Dict[str, Any]:
-        """Get configurable parameters for the agent."""
         pass
 
 
@@ -286,12 +262,12 @@ class IEventBus(ABC):
     """Interface for event bus implementations."""
 
     @abstractmethod
-    def subscribe(self, event_type: EventType, callback) -> None:
+    def subscribe(self, event_type: EventType, callback: Callable[[Event], Awaitable[None]]) -> None:
         """Subscribe to an event type."""
         pass
 
     @abstractmethod
-    def unsubscribe(self, event_type: EventType, callback) -> None:
+    def unsubscribe(self, event_type: EventType, callback: Callable[[Event], Awaitable[None]]) -> None:
         """Unsubscribe from an event type."""
         pass
 
@@ -329,6 +305,78 @@ class IConfigManager(ABC):
 IExchange = IExchangeClient
 
 
+class IAgentManager(ABC):
+    """Interface for agent management."""
+
+    @abstractmethod
+    def register_agent(self, agent: ITradingAgent) -> None:
+        """Register a trading agent."""
+        pass
+
+    @abstractmethod
+    def get_agent(self, name: str) -> Optional[ITradingAgent]:
+        """Get agent by name."""
+        pass
+
+    @abstractmethod
+    def get_active_agent(self) -> Optional[ITradingAgent]:
+        """Get currently active agent."""
+        pass
+
+    @abstractmethod
+    def set_active_agent(self, name: str) -> bool:
+        """Set active agent by name."""
+        pass
+
+    @abstractmethod
+    def list_agents(self) -> List[str]:
+        """List all registered agent names."""
+        pass
+
+
+class IOrderManager(ABC):
+    """Interface for order management."""
+
+    @abstractmethod
+    async def submit_order(self, order: Order) -> Order:
+        """Submit an order for execution."""
+        pass
+
+    @abstractmethod
+    async def cancel_order(self, order_id: str) -> bool:
+        """Cancel an order."""
+        pass
+
+    @abstractmethod
+    def get_order(self, order_id: str) -> Optional[Order]:
+        """Get order by ID."""
+        pass
+
+    @abstractmethod
+    def get_all_orders(self) -> List[Order]:
+        """Get all orders."""
+        pass
+
+
+class IDataStorage(ABC):
+    """Interface for data storage operations."""
+
+    @abstractmethod
+    async def save_market_data(self, data: List[MarketData]) -> None:
+        """Save market data."""
+        pass
+
+    @abstractmethod
+    async def save_order(self, order: Order) -> None:
+        """Save order data."""
+        pass
+
+    @abstractmethod
+    async def save_position(self, position: Position) -> None:
+        """Save position data."""
+        pass
+
+
 class IPortfolioManager(ABC):
     """Interface for portfolio management implementations."""
 
@@ -345,4 +393,33 @@ class IPortfolioManager(ABC):
     @abstractmethod
     def update_position(self, position: Position) -> None:
         """Update a position."""
+        pass
+
+
+class ILogger(ABC):
+    """Interface for logging abstraction."""
+
+    @abstractmethod
+    def debug(self, message: str) -> None:
+        """Log debug message."""
+        pass
+
+    @abstractmethod
+    def info(self, message: str) -> None:
+        """Log info message."""
+        pass
+
+    @abstractmethod
+    def warning(self, message: str) -> None:
+        """Log warning message."""
+        pass
+
+    @abstractmethod
+    def error(self, message: str) -> None:
+        """Log error message."""
+        pass
+
+    @abstractmethod
+    def critical(self, message: str) -> None:
+        """Log critical message."""
         pass

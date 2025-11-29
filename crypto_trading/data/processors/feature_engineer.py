@@ -10,7 +10,7 @@ from loguru import logger
 import pandas_ta as ta
 
 from ...core.interfaces import IDataProcessor, MarketData
-from ...utils.exceptions import DataProcessingError
+from ...core.exceptions import DataProcessingError
 
 
 class FeatureEngineer(IDataProcessor):
