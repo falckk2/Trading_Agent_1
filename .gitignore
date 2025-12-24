@@ -100,3 +100,10 @@ docs/build/
 # Coverage reports
 .coverage.*
 coverage.xml
+
+# Tools and binaries
+.tools/
+*.jar
+
+# Generated diagram images (source .puml files are tracked)
+diagrams/*.png

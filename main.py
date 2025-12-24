@@ -13,11 +13,11 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from crypto_trading.gui.main_window import TradingGUI
 from crypto_trading.core.trading_engine import TradingEngine
 from crypto_trading.core.config_manager import ConfigManager
 from crypto_trading.core.event_bus import EventBus
 from crypto_trading.core.risk_manager import RiskManager
+from crypto_trading.core.agent_manager import AgentManager
 from crypto_trading.exchange.blofin_client import BlofinClient
 from loguru import logger
 
@@ -46,6 +46,7 @@ def run_gui():
     """Run the GUI interface."""
     try:
         logger.info("Starting GUI interface...")
+        from crypto_trading.gui.main_window import TradingGUI
         app = TradingGUI()
         app.run()
     except Exception as e:
@@ -63,6 +64,7 @@ async def run_cli():
         config_manager = ConfigManager()
         event_bus = EventBus()
         risk_manager = RiskManager(config_manager)
+        agent_manager = AgentManager()
 
         # Get exchange configuration
         exchange_config = config_manager.get_section('exchange')
@@ -78,7 +80,8 @@ async def run_cli():
             exchange_client,
             risk_manager,
             event_bus,
-            config_manager
+            config_manager,
+            agent_manager
         )
 
         logger.info("Trading system initialized successfully")
@@ -107,7 +110,7 @@ def check_dependencies():
     """Check if all required dependencies are installed."""
     required_packages = [
         'pandas', 'numpy', 'requests', 'aiohttp',
-        'loguru', 'pandas_ta', 'scikit-learn'
+        'loguru', 'pandas_ta', 'sklearn'
     ]
 
     missing_packages = []

@@ -1,0 +1,269 @@
+@startuml Event_Driven_Architecture
+!theme plain
+
+title Event-Driven Architecture - Event Bus and Pub/Sub Pattern
+
+' Components
+class EventBus {
+    - _subscribers: Dict[EventType, List[Callable]]
+    - _event_history: List[Event]
+    - _max_history: int
+    - _is_running: bool
+    - logger: Logger
+
+    + subscribe(event_type: EventType, callback: Callable): None
+    + unsubscribe(event_type: EventType, callback: Callable): None
+    + publish(event: Event): None
+    + get_event_history(event_type, since, limit): List[Event]
+    + get_subscriber_count(event_type): Dict[str, int]
+    + clear_history(): None
+    + start(): None
+    + stop(): None
+    + get_stats(): Dict
+
+    - _safe_callback(callback: Callable, event: Event): None
+    - _handle_callback_error(error, callback_name, event): None
+    - _add_to_history(event: Event): None
+}
+
+class Event <<dataclass>> {
+    + type: EventType
+    + data: Dict[str, Any]
+    + timestamp: datetime
+}
+
+enum EventType {
+    ORDER_FILLED
+    ORDER_CANCELLED
+    ORDER_REJECTED
+    SIGNAL_GENERATED
+    ERROR_OCCURRED
+    POSITION_OPENED
+    POSITION_CLOSED
+    BALANCE_UPDATED
+    RISK_LIMIT_EXCEEDED
+    AGENT_STARTED
+    AGENT_STOPPED
+    DATA_RECEIVED
+    CONNECTION_LOST
+    CONNECTION_RESTORED
+}
+
+EventBus --> Event : publishes
+EventBus --> EventType : categorizes by
+
+' Event Publishers
+class EventPublisher {
+    - event_bus: EventBus
+    - logger: Logger
+
+    + publish_order_filled(order: Order): None
+    + publish_order_cancelled(order: Order): None
+    + publish_order_rejected(order: Order, reason: str): None
+    + publish_signal_generated(signal: TradingSignal, agent_name: str): None
+    + publish_error(error: str, source: str, details: Dict): None
+    + publish_position_opened(position: Position): None
+    + publish_position_closed(position: Position, pnl: Decimal): None
+    + publish_balance_updated(balance: Dict[str, Decimal]): None
+    + publish_risk_limit_exceeded(limit_type: str, current: float, max: float): None
+    + publish_custom_event(event_type: str, data: Dict): None
+}
+
+EventPublisher --> EventBus : uses
+
+' Event Subscribers
+class EventSubscriber {
+    - event_bus: EventBus
+    - _subscriptions: List[Tuple[EventType, Callable]]
+    - logger: Logger
+
+    + subscribe_to_orders(callback: Callable): None
+    + subscribe_to_signals(callback: Callable): None
+    + subscribe_to_errors(callback: Callable): None
+    + subscribe_to_positions(callback: Callable): None
+    + subscribe_to_all(callback: Callable): None
+    + unsubscribe_all(): None
+}
+
+EventSubscriber --> EventBus : uses
+
+' System Components (Publishers)
+class TradingEngine {
+    - event_bus: EventBus
+
+    + _handle_order_filled(event: Event): None
+    + _handle_order_cancelled(event: Event): None
+    + _handle_signal_generated(event: Event): None
+    + _handle_error(event: Event): None
+}
+
+TradingEngine --> EventBus : publishes to
+TradingEngine --> EventBus : subscribes to
+
+class OrderExecutor {
+    - event_bus: EventBus
+
+    + execute_signal(): None
+}
+
+OrderExecutor --> EventPublisher : uses
+
+class RiskManager {
+    - event_bus: EventBus
+
+    + validate_order(): bool
+}
+
+RiskManager --> EventPublisher : uses
+
+class AgentManager {
+    - event_bus: EventBus
+
+    + start_agent(): None
+    + stop_agent(): None
+}
+
+AgentManager --> EventPublisher : uses
+
+' System Components (Subscribers)
+class Dashboard {
+    - event_subscriber: EventSubscriber
+
+    + update_order_table(event: Event): None
+    + update_position_panel(event: Event): None
+    + update_signal_chart(event: Event): None
+    + show_error_notification(event: Event): None
+}
+
+Dashboard --> EventSubscriber : uses
+
+class Logger {
+    - event_subscriber: EventSubscriber
+
+    + log_order_event(event: Event): None
+    + log_error_event(event: Event): None
+    + log_system_event(event: Event): None
+}
+
+Logger --> EventSubscriber : uses
+
+class NotificationService {
+    - event_subscriber: EventSubscriber
+
+    + send_email_notification(event: Event): None
+    + send_sms_notification(event: Event): None
+    + send_telegram_notification(event: Event): None
+}
+
+NotificationService --> EventSubscriber : uses
+
+class PerformanceMonitor {
+    - event_subscriber: EventSubscriber
+    - _metrics: Dict
+
+    + track_order_latency(event: Event): None
+    + track_signal_count(event: Event): None
+    + track_error_rate(event: Event): None
+    + get_metrics(): Dict
+}
+
+PerformanceMonitor --> EventSubscriber : uses
+
+class AuditLog {
+    - event_subscriber: EventSubscriber
+    - storage: DataStorage
+
+    + record_order_event(event: Event): None
+    + record_position_event(event: Event): None
+    + record_error_event(event: Event): None
+    + query_audit_trail(start, end): List[Event]
+}
+
+AuditLog --> EventSubscriber : uses
+
+' Event Flow Example
+note as EventFlowExample
+    **Event Flow Example:**
+
+    1. Order Placed
+       ↓
+    2. Order Filled by Exchange
+       ↓
+    3. Event Published to EventBus
+       ↓
+    4. All Subscribers Notified
+       (Dashboard, Logger, Notifications, etc.)
+end note
+
+note top of EventBus
+    **Observer Pattern (Pub/Sub)**
+
+    Benefits:
+    - Loose coupling between components
+    - Multiple subscribers per event
+    - Asynchronous notification
+    - Event history for debugging
+    - Easy to add new subscribers
+
+    Thread-safe implementation
+    with async event handling.
+end note
+
+note right of EventPublisher
+    **Helper for Publishing**
+
+    Provides convenience methods
+    for common event types.
+
+    Ensures consistent event format
+    and proper data serialization.
+end note
+
+note left of EventSubscriber
+    **Helper for Subscribing**
+
+    Simplifies subscription to
+    multiple event types.
+
+    Tracks subscriptions for
+    easy cleanup.
+end note
+
+note bottom of Dashboard
+    **UI Updates**
+
+    Listens to events:
+    - ORDER_FILLED → Update table
+    - SIGNAL_GENERATED → Update chart
+    - ERROR_OCCURRED → Show notification
+    - BALANCE_UPDATED → Update display
+
+    Real-time UI updates
+end note
+
+note bottom of NotificationService
+    **External Notifications**
+
+    Sends alerts for critical events:
+    - Order fills
+    - Risk limit breaches
+    - System errors
+    - Connection issues
+
+    Multiple channels:
+    Email, SMS, Telegram
+end note
+
+note bottom of AuditLog
+    **Compliance & Debugging**
+
+    Records all events for:
+    - Regulatory compliance
+    - Debugging issues
+    - Performance analysis
+    - Historical playback
+
+    Permanent storage
+end note
+
+@enduml

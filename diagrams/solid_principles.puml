@@ -1,0 +1,393 @@
+@startuml SOLID_Principles
+!theme plain
+
+title SOLID Principles - Demonstrated in Architecture
+
+' Single Responsibility Principle
+package "Single Responsibility Principle" as SRP {
+    class TradingEngine <<SRP Compliant>> {
+        - Responsibility: Orchestrate trading lifecycle
+        + start()
+        + stop()
+        + enable_trading()
+        + get_status()
+    }
+
+    class OrderExecutor <<SRP Compliant>> {
+        - Responsibility: Execute orders ONLY
+        + execute_signal()
+    }
+
+    class RiskManager <<SRP Compliant>> {
+        - Responsibility: Validate risk ONLY
+        + validate_order()
+        + calculate_position_size()
+    }
+
+    class EventBus <<SRP Compliant>> {
+        - Responsibility: Manage events ONLY
+        + subscribe()
+        + publish()
+    }
+
+    note bottom of TradingEngine
+        One reason to change:
+        Trading orchestration logic changes
+    end note
+
+    note bottom of OrderExecutor
+        One reason to change:
+        Order execution logic changes
+    end note
+
+    note bottom of RiskManager
+        One reason to change:
+        Risk validation rules change
+    end note
+}
+
+' Open/Closed Principle
+package "Open/Closed Principle" as OCP {
+    interface IStrategy <<OCP Compliant>> {
+        + analyze()
+        + validate_signal()
+    }
+
+    abstract class TechnicalStrategy {
+        + analyze() {final}
+        # {abstract} _calculate_indicators()
+        # {abstract} _generate_signal()
+    }
+
+    class RSIStrategy {
+        # _calculate_indicators()
+        # _generate_signal()
+    }
+
+    class MACDStrategy {
+        # _calculate_indicators()
+        # _generate_signal()
+    }
+
+    class CustomStrategy {
+        # _calculate_indicators()
+        # _generate_signal()
+    }
+
+    IStrategy <|.. TechnicalStrategy
+    TechnicalStrategy <|-- RSIStrategy
+    TechnicalStrategy <|-- MACDStrategy
+    TechnicalStrategy <|-- CustomStrategy
+
+    note bottom of IStrategy
+        OPEN for extension:
+        Add new strategies by
+        implementing IStrategy
+
+        CLOSED for modification:
+        Existing strategies unchanged
+    end note
+
+    note bottom of CustomStrategy
+        New strategy added without
+        modifying existing code!
+    end note
+}
+
+' Liskov Substitution Principle
+package "Liskov Substitution Principle" as LSP {
+    interface IExchangeClient <<LSP Compliant>> {
+        + place_order(order: Order): Order
+        + cancel_order(order_id: str): bool
+        + get_balance(): Dict
+    }
+
+    abstract class BaseExchange {
+        + place_order(order: Order): Order
+        + cancel_order(order_id: str): bool
+        + get_balance(): Dict
+        # {abstract} _place_order_impl()
+    }
+
+    class BlofinExchange {
+        # _place_order_impl()
+    }
+
+    class BinanceExchange {
+        # _place_order_impl()
+    }
+
+    class MockExchange {
+        # _place_order_impl()
+    }
+
+    IExchangeClient <|.. BaseExchange
+    BaseExchange <|-- BlofinExchange
+    BaseExchange <|-- BinanceExchange
+    BaseExchange <|-- MockExchange
+
+    class TradingEngine {
+        - exchange: IExchangeClient
+        + execute_trade()
+    }
+
+    TradingEngine --> IExchangeClient
+
+    note bottom of TradingEngine
+        Works with ANY IExchangeClient:
+        - BlofinExchange for production
+        - MockExchange for testing
+        - BinanceExchange for multi-exchange
+
+        Substitutable without changes!
+    end note
+
+    note right of BlofinExchange
+        Preconditions: Not strengthened
+        Postconditions: Not weakened
+        Invariants: Maintained
+        Exceptions: Contract preserved
+    end note
+}
+
+' Interface Segregation Principle
+package "Interface Segregation Principle" as ISP {
+    interface IExchangeConnection <<ISP Compliant>> {
+        + connect(): bool
+        + disconnect(): None
+        + is_connected(): bool
+    }
+
+    interface IMarketDataProvider <<ISP Compliant>> {
+        + get_market_data(symbol): MarketData
+        + get_historical_data(): List[MarketData]
+    }
+
+    interface IOrderExecutor <<ISP Compliant>> {
+        + place_order(order): Order
+        + cancel_order(order_id): bool
+    }
+
+    interface IAccountDataProvider <<ISP Compliant>> {
+        + get_positions(): List[Position]
+        + get_balance(): Dict
+    }
+
+    interface IExchangeClient {
+    }
+
+    IExchangeClient --|> IExchangeConnection
+    IExchangeClient --|> IMarketDataProvider
+    IExchangeClient --|> IOrderExecutor
+    IExchangeClient --|> IAccountDataProvider
+
+    class DataManager {
+        - provider: IMarketDataProvider
+    }
+
+    class OrderExecutor {
+        - executor: IOrderExecutor
+    }
+
+    class RiskManager {
+        - account: IAccountDataProvider
+    }
+
+    DataManager --> IMarketDataProvider
+    OrderExecutor --> IOrderExecutor
+    RiskManager --> IAccountDataProvider
+
+    note bottom of IExchangeConnection
+        Small, focused interface:
+        Only connection methods
+    end note
+
+    note bottom of DataManager
+        Depends only on what it needs:
+        IMarketDataProvider
+
+        NOT the entire IExchangeClient!
+    end note
+
+    note bottom of RiskManager
+        Depends only on what it needs:
+        IAccountDataProvider
+
+        Not forced to depend on
+        order execution methods!
+    end note
+}
+
+' Dependency Inversion Principle
+package "Dependency Inversion Principle" as DIP {
+    interface ITradingAgent <<DIP Compliant>> {
+        + analyze()
+    }
+
+    interface IRiskManager <<DIP Compliant>> {
+        + validate_order()
+    }
+
+    interface IExchangeClient <<DIP Compliant>> {
+        + place_order()
+    }
+
+    class TradingEngine <<High-Level Module>> {
+        - agent: ITradingAgent
+        - risk: IRiskManager
+        - exchange: IExchangeClient
+
+        + __init__(agent, risk, exchange)
+        + execute_trading_cycle()
+    }
+
+    class RSIAgent <<Low-Level Module>> {
+        + analyze()
+    }
+
+    class RiskManager <<Low-Level Module>> {
+        + validate_order()
+    }
+
+    class BlofinExchange <<Low-Level Module>> {
+        + place_order()
+    }
+
+    TradingEngine --> ITradingAgent
+    TradingEngine --> IRiskManager
+    TradingEngine --> IExchangeClient
+
+    ITradingAgent <|.. RSIAgent
+    IRiskManager <|.. RiskManager
+    IExchangeClient <|.. BlofinExchange
+
+    note top of TradingEngine
+        High-level module depends on
+        ABSTRACTIONS (interfaces)
+
+        NOT on low-level modules
+        (concrete implementations)
+    end note
+
+    note bottom of RSIAgent
+        Low-level modules depend on
+        same ABSTRACTIONS
+
+        Both point to interfaces!
+    end note
+
+    note right of TradingEngine
+        **Dependency Injection:**
+
+        Dependencies injected via constructor:
+        ```
+        engine = TradingEngine(
+            agent=rsi_agent,
+            risk=risk_manager,
+            exchange=blofin_exchange
+        )
+        ```
+
+        Easy to:
+        - Test with mocks
+        - Swap implementations
+        - Configure dynamically
+    end note
+}
+
+' Combined Benefits
+note as Benefits
+    **Combined SOLID Benefits:**
+
+    **Add New Strategy** (Developer):
+    - OCP + SRP: Extend TechnicalStrategy
+    - No existing code modified
+
+    **Swap Exchange** (User):
+    - DIP + LSP: Swap IExchangeClient impl
+    - System works unchanged
+
+    **Test with Mocks** (Tester):
+    - DIP + ISP: Mock specific interfaces
+    - Test in isolation
+
+    **Extend Functionality** (All):
+    - All SOLID principles working together
+    - New features easy to add
+    - Existing code stable
+    - Low coupling, High cohesion
+end note
+
+' SOLID Violations (What NOT to do)
+package "SOLID Violations (Anti-Patterns)" as Violations {
+    class GodClass <<Violates SRP>> {
+        + connect_to_exchange()
+        + fetch_market_data()
+        + analyze_data()
+        + calculate_indicators()
+        + generate_signal()
+        + validate_risk()
+        + execute_order()
+        + update_database()
+        + send_notification()
+        + log_trade()
+    }
+
+    class ConcreteExchange <<Violates DIP>> {
+        - blofin: BlofinExchange
+        + execute()
+    }
+
+    class FatInterface <<Violates ISP>> {
+        + connect()
+        + disconnect()
+        + get_data()
+        + place_order()
+        + cancel_order()
+        + get_balance()
+        + get_positions()
+        + subscribe_websocket()
+        + get_historical_data()
+        + get_ticker()
+        + set_leverage()
+        + close_position()
+        + ... 50 more methods
+    }
+
+    note bottom of GodClass
+        SRP VIOLATION:
+        Too many responsibilities!
+        Changes for ANY reason affect this class
+
+        Result:
+        - Hard to test
+        - Hard to maintain
+        - High coupling
+        - Low cohesion
+    end note
+
+    note bottom of ConcreteExchange
+        DIP VIOLATION:
+        Depends on concrete class!
+
+        Result:
+        - Can't swap implementations
+        - Can't test with mocks
+        - Tightly coupled
+        - Inflexible
+    end note
+
+    note bottom of FatInterface
+        ISP VIOLATION:
+        Too many methods!
+        Clients forced to depend on unused methods
+
+        Result:
+        - Unnecessary dependencies
+        - Hard to implement
+        - Frequent changes
+        - Breaking changes
+    end note
+}
+
+@enduml

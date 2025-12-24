@@ -1,0 +1,235 @@
+@startuml State_Diagram
+!theme plain
+
+title Trading Engine State Machine
+
+[*] --> Initialized : create()
+
+state Initialized {
+    [*] --> ConfigLoaded : load_config()
+    ConfigLoaded --> ComponentsCreated : initialize_components()
+    ComponentsCreated --> [*]
+}
+
+Initialized --> Connecting : start()
+
+state Connecting {
+    [*] --> AuthenticatingExchange
+    AuthenticatingExchange --> LoadingAccountInfo : authenticated
+    LoadingAccountInfo --> RegisteringAgents : account_loaded
+    RegisteringAgents --> [*] : agents_ready
+}
+
+Connecting --> Ready : connected
+
+state Ready {
+    [*] --> Idle
+    Idle --> WaitingForSignal : trading_enabled()
+    WaitingForSignal --> Idle : trading_disabled()
+}
+
+Ready --> TradingActive : enable_trading()
+
+state TradingActive {
+    [*] --> FetchingMarketData
+
+    state FetchingMarketData {
+        [*] --> RequestingData
+        RequestingData --> CachedData : cache_hit
+        RequestingData --> FetchingFromAPI : cache_miss
+        FetchingFromAPI --> ValidatingData
+        CachedData --> ValidatingData
+        ValidatingData --> [*] : valid
+        ValidatingData --> RequestingData : invalid / retry
+    }
+
+    FetchingMarketData --> AnalyzingMarket : data_received
+
+    state AnalyzingMarket {
+        [*] --> PreprocessingData
+        PreprocessingData --> CalculatingIndicators : [technical_agent]
+        PreprocessingData --> ExtractingFeatures : [ml_agent]
+
+        CalculatingIndicators --> GeneratingSignal
+        ExtractingFeatures --> RunningModel
+        RunningModel --> GeneratingSignal
+
+        GeneratingSignal --> EvaluatingSignal
+        EvaluatingSignal --> [*] : signal_ready
+    }
+
+    AnalyzingMarket --> ValidatingRisk : signal_generated
+
+    state ValidatingRisk {
+        [*] --> CheckingConfidence
+        CheckingConfidence --> CheckingDailyLoss : confidence >= threshold
+        CheckingConfidence --> SignalRejected : confidence < threshold
+
+        CheckingDailyLoss --> CheckingPositionLimits : within_limit
+        CheckingDailyLoss --> SignalRejected : limit_exceeded
+
+        CheckingPositionLimits --> CheckingExposure : within_limit
+        CheckingPositionLimits --> SignalRejected : limit_exceeded
+
+        CheckingExposure --> CheckingOrderSize : within_limit
+        CheckingExposure --> SignalRejected : limit_exceeded
+
+        CheckingOrderSize --> RiskApproved : valid
+        CheckingOrderSize --> SignalRejected : invalid
+
+        SignalRejected --> [*] : rejected
+        RiskApproved --> [*] : approved
+    }
+
+    ValidatingRisk --> ExecutingOrder : risk_approved
+    ValidatingRisk --> FetchingMarketData : risk_rejected / continue
+
+    state ExecutingOrder {
+        [*] --> CalculatingPositionSize
+        CalculatingPositionSize --> CreatingOrder
+        CreatingOrder --> PlacingOrder
+        PlacingOrder --> OrderSubmitted : submitted
+        PlacingOrder --> OrderFailed : error
+        OrderFailed --> [*] : retry_exhausted
+        OrderSubmitted --> [*] : order_placed
+    }
+
+    ExecutingOrder --> MonitoringOrder : order_placed
+
+    state MonitoringOrder {
+        [*] --> Pending
+        Pending --> Open : accepted_by_exchange
+        Open --> PartiallyFilled : partial_fill
+        PartiallyFilled --> Filled : remaining_filled
+        PartiallyFilled --> Open : waiting
+        Open --> Filled : completely_filled
+        Open --> Cancelled : cancel_requested
+        Pending --> Rejected : rejected_by_exchange
+        Rejected --> [*]
+        Cancelled --> [*]
+        Filled --> [*]
+    }
+
+    MonitoringOrder --> UpdatingPosition : order_filled
+    MonitoringOrder --> FetchingMarketData : order_cancelled
+    MonitoringOrder --> FetchingMarketData : order_rejected
+
+    state UpdatingPosition {
+        [*] --> FetchingPositions
+        FetchingPositions --> CalculatingPnL
+        CalculatingPnL --> CheckingStopLoss
+        CheckingStopLoss --> CheckingTakeProfit : no_stop
+        CheckingStopLoss --> ClosingPosition : stop_triggered
+        CheckingTakeProfit --> UpdatingBalance : no_take_profit
+        CheckingTakeProfit --> ClosingPosition : take_profit_triggered
+        ClosingPosition --> UpdatingBalance
+        UpdatingBalance --> [*]
+    }
+
+    UpdatingPosition --> FetchingMarketData : continue_trading
+
+    FetchingMarketData --> FetchingMarketData : sleep(interval)
+}
+
+TradingActive --> Ready : disable_trading()
+TradingActive --> Stopping : stop_requested
+
+state Stopping {
+    [*] --> CancellingOrders
+    CancellingOrders --> ClosingPositions : all_cancelled
+    ClosingPositions --> SavingState : all_closed
+    SavingState --> DisconnectingExchange
+    DisconnectingExchange --> [*]
+}
+
+Stopping --> Stopped
+
+state Error {
+    [*] --> LoggingError
+    LoggingError --> PublishingErrorEvent
+    PublishingErrorEvent --> AttemptingRecovery
+
+    state AttemptingRecovery {
+        [*] --> Reconnecting
+        Reconnecting --> [*] : success
+        Reconnecting --> RetryExhausted : max_retries
+        RetryExhausted --> [*]
+    }
+
+    AttemptingRecovery --> [*] : recovered
+}
+
+Ready --> Error : connection_lost
+TradingActive --> Error : critical_error
+Connecting --> Error : connection_failed
+
+Error --> Connecting : reconnect_requested
+Error --> Stopped : recovery_failed
+
+Stopped --> [*]
+
+note right of TradingActive
+    **Main Trading Loop**
+
+    Repeats continuously while
+    trading is enabled:
+
+    1. Fetch market data
+    2. Analyze with active agent
+    3. Generate trading signal
+    4. Validate with risk manager
+    5. Execute if approved
+    6. Monitor order status
+    7. Update positions
+    8. Sleep for interval
+    9. Repeat
+
+    Interval: 10 seconds (configurable)
+end note
+
+note bottom of ValidatingRisk
+    **Risk Management Gates**
+
+    All checks must pass:
+    - Signal confidence >= 0.6
+    - Daily loss < max limit
+    - Position count < max
+    - Total exposure < max
+    - Order size >= min
+
+    Any failure → reject signal
+end note
+
+note right of MonitoringOrder
+    **Order Lifecycle**
+
+    States:
+    - PENDING: Submitted to exchange
+    - OPEN: Accepted, waiting fill
+    - PARTIALLY_FILLED: Partial execution
+    - FILLED: Complete execution
+    - CANCELLED: User cancelled
+    - REJECTED: Exchange rejected
+
+    Transitions based on
+    exchange notifications
+end note
+
+note bottom of Error
+    **Error Recovery**
+
+    Automatic recovery for:
+    - Network disconnections
+    - API rate limits
+    - Temporary exchange issues
+
+    Manual intervention for:
+    - Authentication failures
+    - Invalid configuration
+    - Critical system errors
+
+    Max retries: 3
+    Backoff: Exponential
+end note
+
+@enduml

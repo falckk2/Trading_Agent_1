@@ -1,0 +1,368 @@
+@startuml Core_Layer_Detailed
+!theme plain
+
+title Core Layer - Detailed Class Diagram
+
+' Interfaces
+interface IExchangeConnection {
+    + connect(): bool
+    + disconnect(): None
+    + is_connected(): bool
+}
+
+interface IMarketDataProvider {
+    + get_market_data(symbol: str): MarketData
+    + get_historical_data(symbol, timeframe, start, end): List[MarketData]
+}
+
+interface IOrderExecutor {
+    + place_order(order: Order): Order
+    + cancel_order(order_id: str): bool
+    + get_order_status(order_id: str): Order
+}
+
+interface IAccountDataProvider {
+    + get_positions(): List[Position]
+    + get_balance(): Dict[str, Decimal]
+}
+
+interface IExchangeClient {
+}
+IExchangeClient --|> IExchangeConnection
+IExchangeClient --|> IMarketDataProvider
+IExchangeClient --|> IOrderExecutor
+IExchangeClient --|> IAccountDataProvider
+
+interface IRiskManager {
+    + validate_order(order, positions): bool
+    + calculate_position_size(signal, balance): Decimal
+}
+
+interface ITradingAgent {
+    + analyze(market_data): TradingSignal
+    + get_name(): str
+    + get_description(): str
+}
+
+interface IEventBus {
+    + subscribe(event_type, callback): None
+    + unsubscribe(event_type, callback): None
+    + publish(event: Event): None
+}
+
+interface IConfigManager {
+    + get(key, default): Any
+    + set(key, value): None
+    + save(): None
+    + load(): None
+}
+
+interface IAgentManager {
+    + register_agent(agent): None
+    + get_agent(name): ITradingAgent
+    + get_active_agent(): ITradingAgent
+    + set_active_agent(name): bool
+}
+
+' Main Classes
+class TradingEngine {
+    - exchange_client: IExchangeClient
+    - risk_manager: IRiskManager
+    - event_bus: IEventBus
+    - config_manager: IConfigManager
+    - agent_manager: IAgentManager
+    - order_executor: OrderExecutor
+    - account_state_manager: AccountStateManager
+    - execution_strategy: SignalExecutionStrategy
+    - _is_running: bool
+    - _trading_enabled: bool
+
+    + start(): None
+    + stop(): None
+    + enable_trading(): None
+    + disable_trading(): None
+    + get_status(): Dict
+    + get_positions(): List[Position]
+    + get_balance(): Dict[str, Decimal]
+    - _run_trading_loop(): None
+    - _execute_trading_cycle(): None
+    - _get_market_data_for_analysis(symbol): List[MarketData]
+    - _execute_signal(signal): None
+    - _cancel_all_orders(): None
+    - _handle_order_filled(event): None
+    - _handle_order_cancelled(event): None
+    - _handle_signal_generated(event): None
+    - _handle_error(event): None
+}
+
+class OrderExecutor {
+    - exchange_client: IExchangeClient
+    - risk_manager: IRiskManager
+
+    + execute_signal(signal, balance, positions): Order
+    - _create_order_from_signal(signal, size): Order
+}
+
+abstract class SignalExecutionStrategy {
+    + {abstract} execute(signal, executor, balance, positions): Order
+}
+
+class ImmediateExecutionStrategy {
+    + execute(signal, executor, balance, positions): Order
+}
+
+class ConservativeExecutionStrategy {
+    - min_confidence: float
+    + execute(signal, executor, balance, positions): Order
+}
+
+SignalExecutionStrategy <|-- ImmediateExecutionStrategy
+SignalExecutionStrategy <|-- ConservativeExecutionStrategy
+
+class RiskManager {
+    - config_manager: IConfigManager
+    - daily_losses: Dict[str, Decimal]
+    - position_history: List[Position]
+    - default_config: Dict
+
+    + validate_order(order, positions): bool
+    + calculate_position_size(signal, balance): Decimal
+    + get_risk_metrics(positions): Dict
+    + check_stop_loss(position): bool
+    + check_take_profit(position): bool
+    + update_daily_pnl(date, pnl): None
+    + assess_portfolio_risk(positions): Dict
+    - _validate_order_basics(order): bool
+    - _check_daily_loss_limit(): bool
+    - _check_position_limits(order, positions): bool
+    - _check_exposure_limits(order, positions): bool
+    - _check_order_size_limits(order): bool
+    - _calculate_volatility_adjustment(signal): Decimal
+    - _get_config(key): Any
+}
+
+RiskManager ..|> IRiskManager
+
+class EventBus {
+    - _subscribers: Dict[EventType, List[Callable]]
+    - _event_history: List[Event]
+    - _max_history: int
+    - _is_running: bool
+
+    + subscribe(event_type, callback): None
+    + unsubscribe(event_type, callback): None
+    + publish(event: Event): None
+    + get_event_history(event_type, since, limit): List[Event]
+    + get_subscriber_count(event_type): Dict
+    + clear_history(): None
+    + stop(): None
+    + start(): None
+    + get_stats(): Dict
+    - _safe_callback(callback, event): None
+    - _handle_callback_error(error, callback_name, event): None
+    - _add_to_history(event): None
+}
+
+EventBus ..|> IEventBus
+
+class AccountStateManager {
+    - exchange_client: IExchangeClient
+    - event_bus: IEventBus
+    - _balance: Dict[str, Decimal]
+    - _positions: List[Position]
+    - _active_orders: List[Order]
+    - _last_update: datetime
+
+    + update_account_info(): None
+    + get_balance(): Dict[str, Decimal]
+    + get_positions(): List[Position]
+    + get_active_orders(): List[Order]
+    + get_active_order_count(): int
+    + add_active_order(order): None
+    + remove_active_order(order_id): None
+    + clear_active_orders(): None
+    - _update_balance(): None
+    - _update_positions(): None
+}
+
+' Data Models
+class Order <<dataclass>> {
+    + id: str
+    + symbol: str
+    + side: OrderSide
+    + type: OrderType
+    + amount: Decimal
+    + price: Decimal
+    + status: OrderStatus
+    + timestamp: datetime
+    + filled_amount: Decimal
+    + average_price: Decimal
+    + fees: Decimal
+    + metadata: Dict
+
+    + is_filled: bool
+    + is_active: bool
+    + remaining_amount: Decimal
+}
+
+class Position <<dataclass>> {
+    + symbol: str
+    + side: OrderSide
+    + amount: Decimal
+    + entry_price: Decimal
+    + current_price: Decimal
+    + pnl: Decimal
+    + timestamp: datetime
+    + realized_pnl: Decimal
+
+    + market_value: Decimal
+    + unrealized_pnl: Decimal
+    + total_pnl: Decimal
+    + is_long: bool
+    + is_short: bool
+    + update_price(new_price): None
+}
+
+class TradingSignal <<dataclass>> {
+    + symbol: str
+    + action: OrderSide
+    + confidence: float
+    + price: Decimal
+    + amount: Decimal
+    + timestamp: datetime
+    + metadata: Dict
+    + signal_type: SignalType
+    + strength: float
+    + strategy_name: str
+
+    + is_actionable: bool
+}
+
+class MarketData <<dataclass>> {
+    + symbol: str
+    + timestamp: datetime
+    + open: Decimal
+    + high: Decimal
+    + low: Decimal
+    + close: Decimal
+    + volume: Decimal
+    + bid: Decimal
+    + ask: Decimal
+    + spread: Decimal
+
+    + ohlc: tuple
+}
+
+class Event <<dataclass>> {
+    + type: EventType
+    + data: Dict
+    + timestamp: datetime
+}
+
+enum OrderType {
+    MARKET
+    LIMIT
+    STOP
+    STOP_LIMIT
+}
+
+enum OrderSide {
+    BUY
+    SELL
+}
+
+enum OrderStatus {
+    PENDING
+    OPEN
+    FILLED
+    PARTIALLY_FILLED
+    CANCELLED
+    REJECTED
+}
+
+enum EventType {
+    ORDER_FILLED
+    ORDER_CANCELLED
+    SIGNAL_GENERATED
+    ERROR_OCCURRED
+}
+
+' Relationships
+TradingEngine --> IExchangeClient : uses
+TradingEngine --> IRiskManager : uses
+TradingEngine --> IEventBus : uses
+TradingEngine --> IConfigManager : uses
+TradingEngine --> IAgentManager : uses
+TradingEngine --> OrderExecutor : uses
+TradingEngine --> AccountStateManager : uses
+TradingEngine --> SignalExecutionStrategy : uses
+
+OrderExecutor --> IExchangeClient : uses
+OrderExecutor --> IRiskManager : uses
+
+RiskManager --> IConfigManager : uses
+
+AccountStateManager --> IExchangeClient : uses
+AccountStateManager --> IEventBus : uses
+
+EventBus ..> Event : manages
+TradingEngine ..> TradingSignal : processes
+OrderExecutor ..> Order : creates
+RiskManager ..> Position : validates
+AccountStateManager ..> Position : tracks
+AccountStateManager ..> Order : tracks
+
+Order --> OrderType : uses
+Order --> OrderSide : uses
+Order --> OrderStatus : uses
+Position --> OrderSide : uses
+TradingSignal --> OrderSide : uses
+Event --> EventType : uses
+
+note right of TradingEngine
+    **Facade Pattern**
+    Simplifies interaction with
+    complex trading subsystem
+
+    **Responsibilities:**
+    - Orchestrate trading cycle
+    - Coordinate components
+    - Handle lifecycle
+    - Event-driven coordination
+end note
+
+note right of OrderExecutor
+    **Single Responsibility**
+    Only handles order execution
+
+    **Strategy Pattern**
+    Delegates execution approach
+    to strategy object
+end note
+
+note right of RiskManager
+    **Risk Validation:**
+    - Daily loss limits
+    - Position size limits
+    - Exposure limits
+    - Order size validation
+
+    **Position Sizing:**
+    - Confidence-based
+    - Volatility-adjusted
+    - Balance-aware
+end note
+
+note right of EventBus
+    **Observer Pattern**
+    Decouples event producers
+    from consumers
+
+    **Features:**
+    - Async event handling
+    - Event history
+    - Error handling
+    - Subscription management
+end note
+
+@enduml

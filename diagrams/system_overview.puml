@@ -1,0 +1,164 @@
+@startuml Trading_Agent_System_Overview
+!theme plain
+skinparam componentStyle rectangle
+skinparam linetype ortho
+
+title Crypto Trading Agent System - Component Overview
+
+' Define color scheme
+skinparam component {
+    BackgroundColor<<core>> LightBlue
+    BackgroundColor<<agent>> LightGreen
+    BackgroundColor<<exchange>> LightCoral
+    BackgroundColor<<data>> LightYellow
+    BackgroundColor<<ui>> Plum
+}
+
+' GUI Layer
+package "User Interface Layer" <<ui>> {
+    [Main Window] as UI
+    [Dashboard] as Dashboard
+    [Configuration Panel] as ConfigPanel
+}
+
+' Core Layer
+package "Core Layer" <<core>> {
+    [Trading Engine] as Engine
+    [Order Executor] as Executor
+    [Risk Manager] as Risk
+    [Event Bus] as Events
+    [Config Manager] as Config
+    [Account State Manager] as Account
+}
+
+' Agent Layer
+package "Agent Layer" <<agent>> {
+    package "Technical Agents" {
+        [RSI Agent] as RSI
+        [MACD Agent] as MACD
+        [MA Agent] as MA
+        [Bollinger Bands Agent] as BB
+    }
+
+    package "ML Agents" {
+        [Random Forest Agent] as RF
+        [LSTM Agent] as LSTM
+    }
+
+    [Agent Manager] as AgentMgr
+    [Agent Factory] as Factory
+}
+
+' Exchange Layer
+package "Exchange Layer" <<exchange>> {
+    [Base Exchange] as BaseExch
+    [Blofin Exchange] as Blofin
+    [Type Converter] as Converter
+}
+
+' Data Layer
+package "Data Layer" <<data>> {
+    [Data Manager] as DataMgr
+    [Historical Provider] as Historical
+    [Realtime Feed] as Realtime
+    [Data Storage] as Storage
+    [Data Preprocessor] as Preprocessor
+}
+
+' External Systems
+database "PostgreSQL/SQLite" as DB
+cloud "Exchange APIs\n(Blofin, etc.)" as API
+
+' UI Layer Relationships
+UI --> Engine : controls
+Dashboard --> Engine : monitors
+ConfigPanel --> Config : configures
+
+' Core Layer Relationships
+Engine --> AgentMgr : manages agents
+Engine --> Executor : executes orders
+Engine --> Risk : validates
+Engine --> Events : publishes/subscribes
+Engine --> Config : reads config
+Engine --> Account : tracks state
+
+Executor --> BaseExch : places orders
+Executor --> Risk : validates
+
+Risk --> Config : reads limits
+
+Account --> BaseExch : queries positions
+
+' Agent Layer Relationships
+AgentMgr --> Factory : creates agents
+AgentMgr --> RSI : manages
+AgentMgr --> MACD : manages
+AgentMgr --> MA : manages
+AgentMgr --> BB : manages
+AgentMgr --> RF : manages
+AgentMgr --> LSTM : manages
+
+Factory ..> RSI : creates
+Factory ..> MACD : creates
+Factory ..> RF : creates
+Factory ..> LSTM : creates
+
+RSI --> DataMgr : requests data
+MACD --> DataMgr : requests data
+RF --> DataMgr : requests data
+LSTM --> DataMgr : requests data
+
+' Exchange Layer Relationships
+BaseExch <|-- Blofin : extends
+Blofin --> Converter : uses
+Blofin --> API : connects
+
+' Data Layer Relationships
+DataMgr --> Historical : coordinates
+DataMgr --> Realtime : coordinates
+DataMgr --> Storage : persists
+DataMgr --> Preprocessor : transforms
+
+Historical --> BaseExch : fetches from
+Realtime --> BaseExch : subscribes to
+Storage --> DB : reads/writes
+
+' Cross-layer
+Engine --> DataMgr : requests data
+
+' Legend
+legend right
+    |= Layer |= Responsibility |
+    | UI | User interaction and visualization |
+    | Core | Business logic and orchestration |
+    | Agent | Trading strategies and signals |
+    | Exchange | Exchange connectivity |
+    | Data | Market data management |
+endlegend
+
+note right of Engine
+    **Trading Engine (Facade)**
+    - Coordinates all system components
+    - Manages trading lifecycle
+    - Event-driven architecture
+    - Implements main trading loop
+end note
+
+note bottom of AgentMgr
+    **Agent Manager**
+    - Manages multiple agents
+    - Switches active agent
+    - Monitors agent performance
+    - Factory pattern for creation
+end note
+
+note bottom of Risk
+    **Risk Manager**
+    - Position size calculation
+    - Order validation
+    - Exposure limits
+    - Daily loss limits
+    - Stop loss/take profit
+end note
+
+@enduml

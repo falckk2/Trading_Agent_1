@@ -1,0 +1,216 @@
+@startuml Trading_Sequence_Complete
+!theme plain
+
+title Complete Trading Cycle - Signal to Execution
+
+actor User
+participant "Trading\nEngine" as Engine
+participant "Agent\nManager" as AgentMgr
+participant "Trading\nAgent" as Agent
+participant "Data\nManager" as DataMgr
+participant "Risk\nManager" as Risk
+participant "Order\nExecutor" as Executor
+participant "Exchange\nClient" as Exchange
+participant "Event\nBus" as Events
+participant "Account\nState" as Account
+
+User -> Engine: start()
+activate Engine
+
+Engine -> Exchange: connect()
+activate Exchange
+Exchange --> Engine: connected
+deactivate Exchange
+
+Engine -> Account: update_account_info()
+activate Account
+Account -> Exchange: get_balance()
+activate Exchange
+Exchange --> Account: balance
+deactivate Exchange
+Account -> Exchange: get_positions()
+activate Exchange
+Exchange --> Account: positions
+deactivate Exchange
+Account --> Engine: updated
+deactivate Account
+
+Engine -> Engine: enable_trading()
+Engine -> Engine: _run_trading_loop()
+
+group Trading Cycle [Every 10 seconds]
+
+    Engine -> AgentMgr: get_active_agent()
+    activate AgentMgr
+    AgentMgr --> Engine: active_agent
+    deactivate AgentMgr
+
+    Engine -> Engine: _get_market_data_for_analysis("BTC/USDT")
+
+    Engine -> DataMgr: get_historical_data("BTC/USDT", "1h", start, end)
+    activate DataMgr
+    DataMgr -> Exchange: get_historical_data(...)
+    activate Exchange
+    Exchange --> DataMgr: historical_candles
+    deactivate Exchange
+    DataMgr --> Engine: market_data_list
+    deactivate DataMgr
+
+    Engine -> Agent: analyze(market_data)
+    activate Agent
+
+    alt Technical Agent
+        Agent -> Agent: _market_data_to_dataframe()
+        Agent -> Agent: _calculate_indicators()
+        note right: Calculate RSI/MACD/MA/BB
+        Agent -> Agent: _generate_signal()
+        note right: Apply strategy rules
+    else ML Agent
+        Agent -> Agent: _prepare_features()
+        note right: Create feature vector
+        Agent -> Agent: _predict()
+        note right: Model inference
+        Agent -> Agent: _prediction_to_signal()
+    end
+
+    Agent --> Engine: trading_signal
+    deactivate Agent
+
+    Engine -> Events: publish(SIGNAL_GENERATED)
+    activate Events
+    Events -> Events: notify_subscribers()
+    note right: Dashboard updates
+    deactivate Events
+
+    alt Signal confidence >= threshold
+
+        Engine -> Engine: _execute_signal(signal)
+
+        Engine -> Account: get_balance()
+        activate Account
+        Account --> Engine: balance_dict
+        deactivate Account
+
+        Engine -> Account: get_positions()
+        activate Account
+        Account --> Engine: positions_list
+        deactivate Account
+
+        Engine -> Executor: execute_signal(signal, balance, positions)
+        activate Executor
+
+        == Risk Management Phase ==
+
+        Executor -> Risk: calculate_position_size(signal, balance)
+        activate Risk
+        Risk -> Risk: _get_config("max_position_size_pct")
+        Risk -> Risk: calculate with confidence
+        Risk -> Risk: apply volatility adjustment
+        Risk --> Executor: position_size
+        deactivate Risk
+
+        Executor -> Executor: _create_order_from_signal(signal, position_size)
+
+        Executor -> Risk: validate_order(order, positions)
+        activate Risk
+        Risk -> Risk: _validate_order_basics()
+        Risk -> Risk: _check_daily_loss_limit()
+        Risk -> Risk: _check_position_limits()
+        Risk -> Risk: _check_exposure_limits()
+        Risk -> Risk: _check_order_size_limits()
+
+        alt All validations pass
+            Risk --> Executor: true
+            deactivate Risk
+
+            == Order Execution Phase ==
+
+            Executor -> Exchange: place_order(order)
+            activate Exchange
+            Exchange -> Exchange: validate with exchange
+            Exchange -> Exchange: submit to market
+            Exchange --> Executor: order_with_id
+            deactivate Exchange
+
+            Executor --> Engine: placed_order
+            deactivate Executor
+
+            Engine -> Account: add_active_order(placed_order)
+            activate Account
+            Account --> Engine: order_added
+            deactivate Account
+
+            Engine -> Events: publish(ORDER_PLACED)
+            activate Events
+            Events -> Events: notify_subscribers()
+            note right: Log order\nUpdate UI\nNotify monitoring
+            deactivate Events
+
+        else Risk validation failed
+            Risk --> Executor: false (RiskManagementError)
+            deactivate Risk
+            Executor --> Engine: error
+            deactivate Executor
+
+            Engine -> Events: publish(ERROR_OCCURRED)
+            activate Events
+            Events --> Engine: published
+            deactivate Events
+        end
+
+    else Signal too weak
+        note over Engine: Skip execution\nContinue monitoring
+    end
+
+    == Order Monitoring ==
+
+    loop While order is active
+        Engine -> Exchange: get_order_status(order_id)
+        activate Exchange
+        Exchange --> Engine: order_status
+        deactivate Exchange
+
+        alt Order filled
+            Engine -> Account: update_position()
+            activate Account
+            Account --> Engine: updated
+            deactivate Account
+
+            Engine -> Events: publish(ORDER_FILLED)
+            activate Events
+            Events --> Engine: published
+            deactivate Events
+        else Order cancelled/rejected
+            Engine -> Account: remove_active_order(order_id)
+            activate Account
+            Account --> Engine: removed
+            deactivate Account
+
+            Engine -> Events: publish(ORDER_CANCELLED)
+            activate Events
+            Events --> Engine: published
+            deactivate Events
+        end
+    end
+
+    Engine -> Engine: sleep(10 seconds)
+end
+
+User -> Engine: stop()
+
+Engine -> Engine: _cancel_all_orders()
+loop For each active order
+    Engine -> Exchange: cancel_order(order_id)
+    activate Exchange
+    Exchange --> Engine: cancelled
+    deactivate Exchange
+end
+
+Engine -> Exchange: disconnect()
+activate Exchange
+Exchange --> Engine: disconnected
+deactivate Exchange
+
+deactivate Engine
+
+@enduml

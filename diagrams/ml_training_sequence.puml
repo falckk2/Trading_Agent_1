@@ -1,0 +1,254 @@
+@startuml ML_Training_Sequence
+!theme plain
+
+title Machine Learning Agent Training Sequence
+
+actor User
+participant "ML Agent" as Agent
+participant "ML Strategy" as Strategy
+participant "Data Manager" as DataMgr
+participant "Data Preprocessor" as Preprocessor
+participant "Feature Engineer" as Features
+participant "Model" as Model
+database "Storage" as Storage
+
+== Initialization ==
+
+User -> Agent: train_model(symbol, timeframe, days_back)
+activate Agent
+
+Agent -> Agent: validate parameters
+Agent -> Strategy: prepare for training
+activate Strategy
+
+== Data Collection ==
+
+Strategy -> DataMgr: get_historical_data(symbol, timeframe, start_date, end_date)
+activate DataMgr
+
+DataMgr -> Storage: query_historical_data(symbol, timeframe, start_date, end_date)
+activate Storage
+Storage --> DataMgr: raw_candles
+deactivate Storage
+
+alt Insufficient data in storage
+    DataMgr -> DataMgr: fetch_from_exchange()
+    note right: Fetch missing data\nfrom exchange API
+end
+
+DataMgr -> Preprocessor: process_historical_data(raw_data)
+activate Preprocessor
+
+== Data Preprocessing ==
+
+Preprocessor -> Preprocessor: validate_data(raw_data)
+note right: Check for:\n- Valid timestamps\n- Non-negative values\n- Correct order
+
+Preprocessor -> Preprocessor: handle_missing_values(data)
+note right: Methods:\n- Forward fill\n- Interpolation\n- Drop rows
+
+Preprocessor -> Preprocessor: remove_outliers(data, threshold=3.0)
+note right: Z-score based\noutlier detection
+
+Preprocessor -> Preprocessor: normalize_data(data)
+note right: Optional:\n- Min-Max scaling\n- Z-score normalization
+
+Preprocessor --> DataMgr: cleaned_data
+deactivate Preprocessor
+
+DataMgr --> Strategy: processed_market_data
+deactivate DataMgr
+
+== Feature Engineering ==
+
+Strategy -> Features: create_features_for_ml(market_data)
+activate Features
+
+Features -> Features: create_price_features()
+note right: Features:\n- Returns (1-day, 5-day, 20-day)\n- Log returns\n- Price momentum\n- Price acceleration
+
+Features -> Features: create_volume_features()
+note right: Features:\n- Volume changes\n- Volume momentum\n- Volume ratio\n- VWAP
+
+Features -> Features: create_momentum_features()
+note right: Features:\n- RSI (14, 21)\n- MACD (12, 26, 9)\n- Stochastic oscillator\n- Rate of change
+
+Features -> Features: create_volatility_features()
+note right: Features:\n- ATR (14)\n- Bollinger Band width\n- Standard deviation\n- Parkinson volatility
+
+Features -> Features: create_trend_features()
+note right: Features:\n- SMA (20, 50, 200)\n- EMA (12, 26)\n- MA crossovers\n- Trend slopes
+
+Features -> Features: create_lagged_features(lags=[1, 5, 10, 20])
+note right: Historical values:\n- Close price lags\n- Volume lags\n- Indicator lags
+
+Features -> Features: create_rolling_statistics(windows=[5, 10, 20])
+note right: Rolling stats:\n- Mean\n- Std\n- Min/Max\n- Skewness
+
+Features --> Strategy: features_dataframe
+deactivate Features
+
+== Target Creation ==
+
+Strategy -> Strategy: create_target_variable(features_df)
+note right: Target options:\n- Future return (regression)\n- Up/Down/Neutral (classification)\n- Future price (regression)
+
+== Data Preparation ==
+
+Strategy -> Strategy: prepare_training_data(features_df)
+
+Strategy -> Strategy: X, y = split_features_target()
+note right: X = feature columns\ny = target column
+
+Strategy -> Strategy: remove NaN rows
+note right: Drop rows with\nmissing values
+
+Strategy -> Strategy: X_train, X_temp, y_train, y_temp =\n    train_test_split(X, y, test_size=0.3)
+note right: 70% train\n30% temp (test+val)
+
+Strategy -> Strategy: X_val, X_test, y_val, y_test =\n    train_test_split(X_temp, y_temp, test_size=0.5)
+note right: Split temp into:\n15% validation\n15% test
+
+== Feature Scaling ==
+
+Strategy -> Strategy: scaler = create_scaler(type="standard")
+
+Strategy -> Strategy: X_train_scaled = scaler.fit_transform(X_train)
+note right: Fit on training data only\nto prevent data leakage
+
+Strategy -> Strategy: X_val_scaled = scaler.transform(X_val)
+Strategy -> Strategy: X_test_scaled = scaler.transform(X_test)
+
+== Model Creation ==
+
+Strategy -> Model: create_model()
+activate Model
+
+alt Random Forest Model
+    Model -> Model: RandomForestClassifier(\n    n_estimators=100,\n    max_depth=10,\n    min_samples_split=5,\n    random_state=42\n)
+else LSTM Model
+    Model -> Model: Sequential([\n    LSTM(64, return_sequences=True),\n    Dropout(0.2),\n    LSTM(32),\n    Dropout(0.2),\n    Dense(16, activation='relu'),\n    Dense(1, activation='sigmoid')\n])
+else XGBoost Model
+    Model -> Model: XGBClassifier(\n    max_depth=6,\n    learning_rate=0.1,\n    n_estimators=100\n)
+end
+
+Model --> Strategy: model_instance
+deactivate Model
+
+== Model Training ==
+
+Strategy -> Model: fit(X_train_scaled, y_train,\n    validation_data=(X_val_scaled, y_val))
+activate Model
+
+loop Each epoch/iteration
+    Model -> Model: train_step()
+    Model -> Model: calculate_loss()
+    Model -> Model: backpropagate()
+    Model -> Model: update_weights()
+
+    alt Every N iterations
+        Model -> Model: evaluate on validation set
+        Model -> Model: check early stopping
+
+        alt Validation loss not improving
+            Model -> Model: stop training (early stopping)
+            note right: Prevent overfitting
+        end
+    end
+end
+
+Model --> Strategy: trained_model
+deactivate Model
+
+== Model Evaluation ==
+
+Strategy -> Model: predict(X_train_scaled)
+activate Model
+Model --> Strategy: train_predictions
+deactivate Model
+
+Strategy -> Strategy: train_score = evaluate_model(y_train, train_predictions)
+note right: Metrics:\n- Accuracy\n- Precision/Recall\n- F1 Score\n- ROC AUC
+
+Strategy -> Model: predict(X_val_scaled)
+activate Model
+Model --> Strategy: val_predictions
+deactivate Model
+
+Strategy -> Strategy: val_score = evaluate_model(y_val, val_predictions)
+
+Strategy -> Model: predict(X_test_scaled)
+activate Model
+Model --> Strategy: test_predictions
+deactivate Model
+
+Strategy -> Strategy: test_score = evaluate_model(y_test, test_predictions)
+
+== Feature Importance ==
+
+alt Model supports feature importance
+    Strategy -> Model: get_feature_importances()
+    activate Model
+    Model --> Strategy: feature_importances
+    deactivate Model
+
+    Strategy -> Strategy: sort features by importance
+    Strategy -> Strategy: log top 10 features
+end
+
+== Model Persistence ==
+
+Strategy -> Storage: save_model(model, scaler, metadata)
+activate Storage
+
+Storage -> Storage: serialize_model()
+note right: Save as:\n- Pickle (scikit-learn)\n- H5 (Keras)\n- JSON (XGBoost)
+
+Storage -> Storage: serialize_scaler()
+Storage -> Storage: save_metadata({\n    feature_columns,\n    training_score,\n    validation_score,\n    test_score,\n    timestamp,\n    parameters\n})
+
+Storage --> Strategy: model_saved
+deactivate Storage
+
+== Return Results ==
+
+Strategy -> Strategy: create_training_metrics()
+
+Strategy --> Agent: training_results = {\n    training_score: 0.85,\n    validation_score: 0.82,\n    test_score: 0.80,\n    training_samples: 5000,\n    validation_samples: 750,\n    test_samples: 750,\n    features_count: 45,\n    epochs: 50,\n    training_time: 120s,\n    feature_importance: {...}\n}
+deactivate Strategy
+
+Agent -> Agent: update_agent_state(\n    is_trained=True,\n    last_training_time=now()\n)
+
+Agent --> User: training_results
+deactivate Agent
+
+== Model Usage (Inference) ==
+
+User -> Agent: analyze(market_data)
+activate Agent
+
+Agent -> Strategy: analyze(market_data)
+activate Strategy
+
+Strategy -> Features: create_features_for_ml(market_data)
+activate Features
+Features --> Strategy: features_df
+deactivate Features
+
+Strategy -> Strategy: latest_features = features_df.iloc[-1:]
+Strategy -> Strategy: features_scaled = scaler.transform(latest_features)
+
+Strategy -> Model: predict(features_scaled)
+activate Model
+Model --> Strategy: prediction
+deactivate Model
+
+Strategy -> Strategy: signal = prediction_to_signal(\n    prediction,\n    current_price,\n    confidence\n)
+
+Strategy --> Agent: trading_signal
+deactivate Strategy
+
+Agent --> User: trading_signal
+deactivate Agent
+
+@enduml

@@ -337,3 +337,343 @@ class ConfigValidator:
             return f"Config key '{key}' must be <= {max_value}, got {num_value}"
 
         return None
+
+
+# ==================== Parameter Validators for SOLID Principles ====================
+# Following Single Responsibility Principle - each validator has one validation purpose
+
+from abc import ABC, abstractmethod
+from typing import Any, Callable
+
+
+class ValidationError(Exception):
+    """Exception raised when parameter validation fails."""
+    pass
+
+
+class ParameterValidator(ABC):
+    """Abstract base class for parameter validators."""
+
+    def __init__(self, param_name: str, error_message: Optional[str] = None):
+        """
+        Initialize validator.
+
+        Args:
+            param_name: Name of the parameter being validated
+            error_message: Custom error message (optional)
+        """
+        self.param_name = param_name
+        self.error_message = error_message
+
+    @abstractmethod
+    def validate(self, value: Any) -> bool:
+        """
+        Validate a value.
+
+        Args:
+            value: Value to validate
+
+        Returns:
+            True if valid
+
+        Raises:
+            ValidationError: If validation fails
+        """
+        pass
+
+    def _format_error(self, detail: str) -> str:
+        """Format error message."""
+        if self.error_message:
+            return f"{self.error_message}: {detail}"
+        return f"Validation failed for '{self.param_name}': {detail}"
+
+
+class RangeValidator(ParameterValidator):
+    """Validates that a numeric value is within a specified range."""
+
+    def __init__(
+        self,
+        param_name: str,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        inclusive: bool = True,
+        error_message: Optional[str] = None
+    ):
+        """
+        Initialize range validator.
+
+        Args:
+            param_name: Parameter name
+            min_value: Minimum allowed value (None = no minimum)
+            max_value: Maximum allowed value (None = no maximum)
+            inclusive: Whether range endpoints are inclusive
+            error_message: Custom error message
+        """
+        super().__init__(param_name, error_message)
+        self.min_value = min_value
+        self.max_value = max_value
+        self.inclusive = inclusive
+
+    def validate(self, value: Any) -> bool:
+        """Validate value is in range."""
+        try:
+            num_value = float(value)
+        except (ValueError, TypeError):
+            raise ValidationError(
+                self._format_error(f"Must be numeric, got {type(value).__name__}")
+            )
+
+        if self.min_value is not None:
+            if self.inclusive and num_value < self.min_value:
+                raise ValidationError(
+                    self._format_error(f"Must be >= {self.min_value}, got {num_value}")
+                )
+            elif not self.inclusive and num_value <= self.min_value:
+                raise ValidationError(
+                    self._format_error(f"Must be > {self.min_value}, got {num_value}")
+                )
+
+        if self.max_value is not None:
+            if self.inclusive and num_value > self.max_value:
+                raise ValidationError(
+                    self._format_error(f"Must be <= {self.max_value}, got {num_value}")
+                )
+            elif not self.inclusive and num_value >= self.max_value:
+                raise ValidationError(
+                    self._format_error(f"Must be < {self.max_value}, got {num_value}")
+                )
+
+        return True
+
+
+class TypeValidator(ParameterValidator):
+    """Validates that a value is of the expected type."""
+
+    def __init__(
+        self,
+        param_name: str,
+        expected_type: type,
+        error_message: Optional[str] = None
+    ):
+        """
+        Initialize type validator.
+
+        Args:
+            param_name: Parameter name
+            expected_type: Expected type
+            error_message: Custom error message
+        """
+        super().__init__(param_name, error_message)
+        self.expected_type = expected_type
+
+    def validate(self, value: Any) -> bool:
+        """Validate value type."""
+        if not isinstance(value, self.expected_type):
+            raise ValidationError(
+                self._format_error(
+                    f"Expected {self.expected_type.__name__}, got {type(value).__name__}"
+                )
+            )
+        return True
+
+
+class ChoiceValidator(ParameterValidator):
+    """Validates that a value is one of allowed choices."""
+
+    def __init__(
+        self,
+        param_name: str,
+        choices: List[Any],
+        case_sensitive: bool = True,
+        error_message: Optional[str] = None
+    ):
+        """
+        Initialize choice validator.
+
+        Args:
+            param_name: Parameter name
+            choices: List of allowed choices
+            case_sensitive: Whether string comparison is case-sensitive
+            error_message: Custom error message
+        """
+        super().__init__(param_name, error_message)
+        self.choices = choices
+        self.case_sensitive = case_sensitive
+
+    def validate(self, value: Any) -> bool:
+        """Validate value is in choices."""
+        if self.case_sensitive:
+            if value not in self.choices:
+                raise ValidationError(
+                    self._format_error(
+                        f"Must be one of {self.choices}, got '{value}'"
+                    )
+                )
+        else:
+            # Case-insensitive comparison for strings
+            if isinstance(value, str):
+                if value.lower() not in [str(c).lower() for c in self.choices]:
+                    raise ValidationError(
+                        self._format_error(
+                            f"Must be one of {self.choices}, got '{value}'"
+                        )
+                    )
+            elif value not in self.choices:
+                raise ValidationError(
+                    self._format_error(
+                        f"Must be one of {self.choices}, got '{value}'"
+                    )
+                )
+        return True
+
+
+class RequiredValidator(ParameterValidator):
+    """Validates that a value is not None."""
+
+    def validate(self, value: Any) -> bool:
+        """Validate value is not None."""
+        if value is None:
+            raise ValidationError(
+                self._format_error("Parameter is required")
+            )
+        return True
+
+
+class PositiveValidator(ParameterValidator):
+    """Validates that a numeric value is positive."""
+
+    def __init__(
+        self,
+        param_name: str,
+        allow_zero: bool = False,
+        error_message: Optional[str] = None
+    ):
+        """
+        Initialize positive validator.
+
+        Args:
+            param_name: Parameter name
+            allow_zero: Whether zero is allowed
+            error_message: Custom error message
+        """
+        super().__init__(param_name, error_message)
+        self.allow_zero = allow_zero
+
+    def validate(self, value: Any) -> bool:
+        """Validate value is positive."""
+        try:
+            num_value = float(value)
+        except (ValueError, TypeError):
+            raise ValidationError(
+                self._format_error(f"Must be numeric, got {type(value).__name__}")
+            )
+
+        if self.allow_zero:
+            if num_value < 0:
+                raise ValidationError(
+                    self._format_error(f"Must be >= 0, got {num_value}")
+                )
+        else:
+            if num_value <= 0:
+                raise ValidationError(
+                    self._format_error(f"Must be > 0, got {num_value}")
+                )
+
+        return True
+
+
+class CustomValidator(ParameterValidator):
+    """Validator using a custom validation function."""
+
+    def __init__(
+        self,
+        param_name: str,
+        validation_func: Callable[[Any], bool],
+        error_message: Optional[str] = None
+    ):
+        """
+        Initialize custom validator.
+
+        Args:
+            param_name: Parameter name
+            validation_func: Function that returns True if valid, False otherwise
+            error_message: Custom error message
+        """
+        super().__init__(param_name, error_message)
+        self.validation_func = validation_func
+
+    def validate(self, value: Any) -> bool:
+        """Validate using custom function."""
+        if not self.validation_func(value):
+            raise ValidationError(
+                self._format_error(f"Custom validation failed for value: {value}")
+            )
+        return True
+
+
+# Convenience functions for common validation scenarios
+def validate_ma_parameters(params: dict) -> bool:
+    """
+    Validate moving average parameters.
+
+    Args:
+        params: Parameters to validate
+
+    Returns:
+        True if valid
+
+    Raises:
+        ValidationError: If validation fails
+    """
+    # Validate fast_period
+    if 'fast_period' in params:
+        PositiveValidator('fast_period').validate(params['fast_period'])
+        RangeValidator('fast_period', min_value=1, max_value=200).validate(params['fast_period'])
+
+    # Validate slow_period
+    if 'slow_period' in params:
+        PositiveValidator('slow_period').validate(params['slow_period'])
+        RangeValidator('slow_period', min_value=1, max_value=200).validate(params['slow_period'])
+
+    # Validate ma_type
+    if 'ma_type' in params:
+        ChoiceValidator(
+            'ma_type',
+            ['sma', 'ema', 'wma', 'hma'],
+            case_sensitive=False
+        ).validate(params['ma_type'])
+
+    # Validate that fast < slow
+    if 'fast_period' in params and 'slow_period' in params:
+        if params['fast_period'] >= params['slow_period']:
+            raise ValidationError(
+                "fast_period must be less than slow_period"
+            )
+
+    return True
+
+
+def validate_rsi_parameters(params: dict) -> bool:
+    """
+    Validate RSI parameters.
+
+    Args:
+        params: Parameters to validate
+
+    Returns:
+        True if valid
+
+    Raises:
+        ValidationError: If validation fails
+    """
+    if 'period' in params:
+        PositiveValidator('period').validate(params['period'])
+        RangeValidator('period', min_value=2, max_value=100).validate(params['period'])
+
+    if 'overbought' in params:
+        RangeValidator('overbought', min_value=50, max_value=100).validate(params['overbought'])
+
+    if 'oversold' in params:
+        RangeValidator('oversold', min_value=0, max_value=50).validate(params['oversold'])
+
+    return True

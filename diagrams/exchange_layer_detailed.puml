@@ -1,0 +1,374 @@
+@startuml Exchange_Layer_Detailed
+!theme plain
+
+title Exchange Layer - Exchange Integration Architecture
+
+' Core Exchange Interfaces
+interface IExchangeConnection {
+    + {abstract} connect(): bool
+    + {abstract} disconnect(): None
+    + {abstract} is_connected(): bool
+}
+
+interface IMarketDataProvider {
+    + {abstract} get_market_data(symbol: str): MarketData
+    + {abstract} get_historical_data(symbol, timeframe, start, end): List[MarketData]
+}
+
+interface IOrderExecutor {
+    + {abstract} place_order(order: Order): Order
+    + {abstract} cancel_order(order_id: str): bool
+    + {abstract} get_order_status(order_id: str): Order
+}
+
+interface IAccountDataProvider {
+    + {abstract} get_positions(): List[Position]
+    + {abstract} get_balance(): Dict[str, Decimal]
+}
+
+interface IExchangeClient {
+}
+
+IExchangeClient --|> IExchangeConnection
+IExchangeClient --|> IMarketDataProvider
+IExchangeClient --|> IOrderExecutor
+IExchangeClient --|> IAccountDataProvider
+
+' Base Exchange Template
+abstract class BaseExchange {
+    # api_key: str
+    # api_secret: str
+    # sandbox: bool
+    # _connected: bool
+    # rate_limit_delay: float
+    # timeout: int
+    # max_retries: int
+    # retry_delay: int
+    # _market_data_cache: Dict[str, MarketData]
+    # _cache_expiry: int
+    # _last_cache_update: Dict[str, float]
+    # logger: Logger
+
+    ' Public Template Methods
+    + connect(): bool
+    + disconnect(): None
+    + is_connected(): bool
+    + get_balance(): Dict[str, Decimal]
+    + place_order(order: Order): Order
+    + cancel_order(order_id: str): bool
+    + get_order_status(order_id: str): Order
+    + get_market_data(symbol: str): MarketData
+    + get_historical_data(symbol, timeframe, start, end): List[MarketData]
+    + get_positions(): List[Position]
+
+    ' Abstract Methods (Hook Methods)
+    # {abstract} _authenticate(): None
+    # {abstract} _initialize_connection(): None
+    # {abstract} _cleanup_connection(): None
+    # {abstract} _get_balance_impl(): Dict[str, Decimal]
+    # {abstract} _place_order_impl(order: Order): str
+    # {abstract} _cancel_order_impl(order_id: str): bool
+    # {abstract} _get_order_status_impl(order_id: str): Order
+    # {abstract} _get_market_data_impl(symbol: str): MarketData
+    # {abstract} _get_historical_data_impl(symbol, timeframe, start, end, limit): List[MarketData]
+    # {abstract} _get_positions_impl(): List[Position]
+
+    ' Helper Methods
+    # _ensure_connected(): None
+    # _validate_order(order: Order): None
+    # _is_cache_valid(symbol: str): bool
+    # _update_cache(symbol: str, data: MarketData): None
+    # _rate_limit(): None
+    # _retry_request(func: Callable, *args, **kwargs): Any
+}
+
+BaseExchange ..|> IExchangeClient
+
+' Concrete Exchange Implementation
+class BlofinExchange {
+    - client: BlofinClient
+    - instrument_cache: Dict[str, Dict]
+    - _instruments_loaded: bool
+
+    ' Constructor
+    + __init__(api_key, api_secret, passphrase, sandbox)
+
+    ' Implement Abstract Methods
+    # _authenticate(): None
+    # _initialize_connection(): None
+    # _cleanup_connection(): None
+    # _get_balance_impl(): Dict[str, Decimal]
+    # _place_order_impl(order: Order): str
+    # _cancel_order_impl(order_id: str): bool
+    # _get_order_status_impl(order_id: str): Order
+    # _get_market_data_impl(symbol: str): MarketData
+    # _get_historical_data_impl(symbol, timeframe, start, end, limit): List[MarketData]
+    # _get_positions_impl(): List[Position]
+
+    ' Blofin-Specific Methods
+    - _load_instruments(): None
+    - _normalize_symbol(symbol: str): str
+    - _denormalize_symbol(symbol: str): str
+    - _map_timeframe(timeframe: str): str
+}
+
+BaseExchange <|-- BlofinExchange
+
+' Exchange Client (API Wrapper)
+class BlofinClient {
+    - api_key: str
+    - api_secret: str
+    - passphrase: str
+    - base_url: str
+    - session: aiohttp.ClientSession
+    - logger: Logger
+
+    ' Public API Methods
+    + get_account_balance(): Dict
+    + get_account_config(): Dict
+    + place_order(params: Dict): Dict
+    + cancel_order(order_id: str, symbol: str): Dict
+    + get_order(order_id: str, symbol: str): Dict
+    + get_open_orders(symbol: str): List[Dict]
+    + get_ticker(symbol: str): Dict
+    + get_candles(symbol: str, timeframe: str, start: int, end: int): List
+    + get_positions(symbol: str): List
+    + get_instruments(inst_type: str): List
+    + close_position(symbol: str, side: str): Dict
+
+    ' Authentication & Signing
+    - _sign_request(timestamp: str, method: str, endpoint: str, body: str): str
+    - _get_timestamp(): str
+    - _get_headers(method: str, endpoint: str, body: str): Dict
+
+    ' HTTP Methods
+    - _request(method: str, endpoint: str, params: Dict, signed: bool): Dict
+    - _get(endpoint: str, params: Dict, signed: bool): Dict
+    - _post(endpoint: str, data: Dict, signed: bool): Dict
+    - _delete(endpoint: str, params: Dict, signed: bool): Dict
+
+    ' Error Handling
+    - _handle_response(response: aiohttp.ClientResponse): Dict
+    - _handle_error(error: Exception): None
+}
+
+BlofinExchange --> BlofinClient : uses
+
+' Type Converter (Adapter Pattern)
+class TypeConverter {
+    ' Market Data Conversions
+    + {static} to_market_data(exchange_data: Dict, symbol: str): MarketData
+    + {static} to_market_data_from_ticker(ticker: Dict): MarketData
+    + {static} to_market_data_from_candle(candle: List, symbol: str): MarketData
+
+    ' Order Conversions
+    + {static} to_order(exchange_order: Dict): Order
+    + {static} from_order(order: Order): Dict
+    + {static} to_order_params(order: Order): Dict
+
+    ' Position Conversions
+    + {static} to_position(exchange_position: Dict): Position
+
+    ' Enum Conversions
+    + {static} to_order_type(exchange_type: str): OrderType
+    + {static} to_order_side(exchange_side: str): OrderSide
+    + {static} to_order_status(exchange_status: str): OrderStatus
+    + {static} from_order_type(order_type: OrderType): str
+    + {static} from_order_side(side: OrderSide): str
+
+    ' Utility Conversions
+    + {static} to_decimal(value: Any): Decimal
+    + {static} to_datetime(timestamp: Any): datetime
+    + {static} from_datetime(dt: datetime): int
+}
+
+BlofinExchange --> TypeConverter : uses
+BlofinClient ..> TypeConverter : data flows through
+
+' Exchange-Specific Models
+class ExchangeConfig <<dataclass>> {
+    + api_key: str
+    + api_secret: str
+    + passphrase: str
+    + sandbox: bool
+    + base_url: str
+    + timeout: int
+    + rate_limit_delay: float
+}
+
+class InstrumentInfo <<dataclass>> {
+    + symbol: str
+    + base_currency: str
+    + quote_currency: str
+    + min_order_size: Decimal
+    + max_order_size: Decimal
+    + tick_size: Decimal
+    + price_precision: int
+    + quantity_precision: int
+    + contract_type: str
+    + leverage: int
+}
+
+BlofinExchange ..> ExchangeConfig : configured by
+BlofinExchange ..> InstrumentInfo : caches
+
+' Domain Models Used
+class Order <<dataclass>> {
+    + id: str
+    + symbol: str
+    + side: OrderSide
+    + type: OrderType
+    + amount: Decimal
+    + price: Decimal
+    + status: OrderStatus
+}
+
+class Position <<dataclass>> {
+    + symbol: str
+    + side: OrderSide
+    + amount: Decimal
+    + entry_price: Decimal
+    + current_price: Decimal
+    + pnl: Decimal
+}
+
+class MarketData <<dataclass>> {
+    + symbol: str
+    + timestamp: datetime
+    + open: Decimal
+    + high: Decimal
+    + low: Decimal
+    + close: Decimal
+    + volume: Decimal
+}
+
+enum OrderType {
+    MARKET
+    LIMIT
+    STOP
+    STOP_LIMIT
+}
+
+enum OrderSide {
+    BUY
+    SELL
+}
+
+enum OrderStatus {
+    PENDING
+    OPEN
+    FILLED
+    PARTIALLY_FILLED
+    CANCELLED
+    REJECTED
+}
+
+TypeConverter ..> Order : converts to/from
+TypeConverter ..> Position : converts to
+TypeConverter ..> MarketData : converts to
+TypeConverter ..> OrderType : converts
+TypeConverter ..> OrderSide : converts
+TypeConverter ..> OrderStatus : converts
+
+' Exchange Factory (Optional Enhancement)
+class ExchangeFactory {
+    - {static} _exchanges: Dict[str, Type[BaseExchange]]
+
+    + {static} register_exchange(name: str, exchange_class: Type): None
+    + {static} create_exchange(name: str, config: Dict): IExchangeClient
+    + {static} get_available_exchanges(): List[str]
+}
+
+ExchangeFactory ..> BaseExchange : creates
+ExchangeFactory ..> IExchangeClient : returns
+
+note top of BaseExchange
+    **Template Method Pattern**
+
+    Public methods define the workflow:
+    1. Validation
+    2. Caching check
+    3. Call implementation method
+    4. Error handling
+    5. Rate limiting
+
+    Subclasses implement _impl methods
+    for exchange-specific logic.
+
+    Benefits:
+    - Code reuse
+    - Consistent behavior
+    - Easy to add new exchanges
+end note
+
+note right of TypeConverter
+    **Adapter Pattern**
+
+    Converts between:
+    - Exchange API formats
+    - Domain models
+
+    Responsibilities:
+    - Type safety
+    - Data validation
+    - Format normalization
+    - Decimal precision
+
+    Benefits:
+    - Isolates exchange changes
+    - Single conversion point
+    - Type-safe conversions
+end note
+
+note bottom of BlofinClient
+    **Low-Level API Client**
+
+    Handles:
+    - HTTP requests
+    - Authentication & signing
+    - Error handling
+    - Rate limiting
+    - Retries
+
+    Does NOT handle:
+    - Business logic
+    - Data conversion
+    - Caching
+end note
+
+note left of BlofinExchange
+    **Exchange Implementation**
+
+    Implements all abstract methods
+    from BaseExchange.
+
+    Additional features:
+    - Instrument caching
+    - Symbol normalization
+    - Timeframe mapping
+    - Blofin-specific quirks
+end note
+
+' Connection Pool (Future Enhancement)
+class ConnectionPool {
+    - _pool: Dict[str, IExchangeClient]
+    - _max_connections: int
+
+    + get_connection(exchange_name: str): IExchangeClient
+    + release_connection(exchange_name: str): None
+    + close_all(): None
+}
+
+ConnectionPool ..> IExchangeClient : manages
+
+note bottom of ExchangeFactory
+    **Factory Pattern**
+
+    Benefits:
+    - Runtime exchange selection
+    - Easy to add new exchanges
+    - Configuration-based creation
+    - Open/Closed Principle
+end note
+
+@enduml

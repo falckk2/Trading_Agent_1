@@ -1,0 +1,168 @@
+@startuml Deployment_Diagram
+!theme plain
+
+title Deployment Architecture - Production Environment
+
+' Deployment Nodes
+node "Application Server" as AppServer {
+    artifact "Trading Engine" as Engine {
+        component "Core Layer" as Core
+        component "Agent Manager" as AgentMgr
+        component "Risk Manager" as Risk
+        component "Order Executor" as Executor
+        component "Event Bus" as Events
+    }
+
+    artifact "Data Layer" as DataLayer {
+        component "Data Manager" as DataMgr
+        component "Historical Provider" as Historical
+        component "Realtime Feed" as Realtime
+        component "Preprocessor" as Preprocessor
+        component "Feature Engineer" as Features
+    }
+
+    artifact "Agent Layer" as AgentLayer {
+        component "Technical Agents" as TechAgents
+        component "ML Agents" as MLAgents
+    }
+
+    artifact "Exchange Layer" as ExchangeLayer {
+        component "Exchange Clients" as ExchangeClients
+    }
+}
+
+node "GUI Client" as GUINode {
+    artifact "PyQt Application" as GUI {
+        component "Main Window" as MainWindow
+        component "Dashboard" as Dashboard
+        component "Charts" as Charts
+        component "Config Panel" as ConfigPanel
+    }
+}
+
+database "PostgreSQL Server" as DB {
+    storage "Market Data DB" as MarketDB
+    storage "Trading DB" as TradingDB
+    storage "Audit Log DB" as AuditDB
+}
+
+database "Redis Cache" as Cache {
+    storage "Market Data Cache" as DataCache
+    storage "Session Cache" as SessionCache
+}
+
+cloud "Exchange APIs" as Exchanges {
+    node "Blofin API" as Blofin
+    node "Binance API" as Binance
+    node "Coinbase API" as Coinbase
+}
+
+cloud "Data Providers" as DataProviders {
+    node "CoinGecko API" as CoinGecko
+    node "CryptoCompare API" as CryptoCompare
+}
+
+cloud "Notification Services" as Notifications {
+    node "Email Service (SMTP)" as Email
+    node "Telegram Bot API" as Telegram
+    node "SMS Service (Twilio)" as SMS
+}
+
+node "Monitoring Stack" as Monitoring {
+    component "Prometheus" as Prometheus
+    component "Grafana" as Grafana
+    component "AlertManager" as AlertManager
+}
+
+node "Log Aggregation" as Logging {
+    component "Elasticsearch" as ES
+    component "Logstash" as Logstash
+    component "Kibana" as Kibana
+}
+
+' Connections
+GUI --> Engine : WebSocket/REST API
+GUI --> Dashboard : updates
+
+Engine --> DB : read/write
+Engine --> Cache : cache ops
+DataLayer --> DB : persist data
+DataLayer --> Cache : cache market data
+
+ExchangeClients --> Exchanges : REST/WebSocket
+ExchangeClients --> DataProviders : fetch data
+
+Events --> Notifications : send alerts
+Events --> Monitoring : export metrics
+Events --> Logging : send logs
+
+Prometheus --> AppServer : scrape metrics
+Grafana --> Prometheus : query metrics
+AlertManager --> Notifications : trigger alerts
+
+Logstash --> AppServer : collect logs
+Logstash --> ES : index logs
+Kibana --> ES : search logs
+
+' Notes
+note right of AppServer
+    **Application Server Specs**
+    - CPU: 8+ cores
+    - RAM: 16GB+
+    - Storage: 500GB SSD
+    - OS: Ubuntu 22.04 LTS
+    - Python 3.11+
+    - Docker containerized
+
+    **High Availability:**
+    - Load balancer
+    - Auto-scaling
+    - Failover support
+end note
+
+note right of DB
+    **Database Configuration**
+    - Primary + Replica
+    - Connection pooling
+    - Regular backups
+    - Point-in-time recovery
+
+    **Tables:**
+    - market_data (time-series)
+    - orders
+    - positions
+    - trades
+    - agent_configs
+    - system_logs
+end note
+
+note bottom of Cache
+    **Caching Strategy**
+    - Market data: 5s TTL
+    - Instrument info: 1h TTL
+    - Session data: 24h TTL
+
+    **Benefits:**
+    - Reduced API calls
+    - Faster response times
+    - Lower latency
+end note
+
+note bottom of Monitoring
+    **Metrics Collected**
+    - Order latency
+    - Signal generation rate
+    - API response times
+    - Error rates
+    - Resource usage (CPU/RAM)
+    - Trading P&L
+    - Position counts
+
+    **Alerts:**
+    - High error rate
+    - Connection loss
+    - Risk limits exceeded
+    - System resource limits
+end note
+
+@enduml

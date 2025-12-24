@@ -1,0 +1,370 @@
+@startuml Package_Diagram
+!theme plain
+
+title Package Diagram - System Modules and Dependencies
+
+' Packages
+package "crypto_trading" {
+
+    package "core" {
+        [interfaces.py] as CoreInterfaces
+        [models.py] as CoreModels
+        [trading_engine.py] as TradingEngine
+        [order_executor.py] as OrderExecutor
+        [risk_manager.py] as RiskManager
+        [event_bus.py] as EventBus
+        [config_manager.py] as ConfigManager
+        [account_state_manager.py] as AccountState
+        [exceptions.py] as Exceptions
+        [constants.py] as Constants
+    }
+
+    package "agents" {
+        [base_agent.py] as BaseAgent
+        [agent_manager.py] as AgentManager
+        [agent_factory.py] as AgentFactory
+
+        package "technical" {
+            [technical_strategy.py] as TechStrategy
+            [rsi_agent.py] as RSIAgent
+            [macd_agent.py] as MACDAgent
+            [moving_average_agent.py] as MAAgent
+            [bollinger_bands_agent.py] as BBAgent
+        }
+
+        package "ml" {
+            [ml_strategy.py] as MLStrategy
+            [random_forest_agent.py] as RFAgent
+            [random_forest_strategy.py] as RFStrategy
+            [lstm_agent.py] as LSTMAgent
+            [ml_model_trainer.py] as MLTrainer
+        }
+    }
+
+    package "exchange" {
+        [base_exchange.py] as BaseExchange
+        [blofin_exchange.py] as BlofinExchange
+        [blofin_client.py] as BlofinClient
+        [type_converter.py] as TypeConverter
+    }
+
+    package "data" {
+        [data_manager.py] as DataManager
+        [persistence.py] as Persistence
+
+        package "historical" {
+            [data_provider.py] as HistoricalProvider
+        }
+
+        package "realtime" {
+            [realtime_feed.py] as RealtimeFeed
+        }
+
+        package "preprocessing" {
+            [data_preprocessor.py] as Preprocessor
+        }
+
+        package "processors" {
+            [feature_engineer.py] as FeatureEngineer
+        }
+
+        package "storage" {
+            [data_storage.py] as DataStorage
+            [data_storage_manager.py] as StorageManager
+        }
+
+        package "collectors" {
+            [market_data_collector.py] as Collector
+        }
+    }
+
+    package "gui" {
+        [main_window.py] as MainWindow
+    }
+
+    package "security" {
+        [credential_manager.py] as CredentialManager
+    }
+
+    package "utils" {
+        [logging.py] as Logging
+        [decorators.py] as Decorators
+        [validators.py] as Validators
+        [data_utils.py] as DataUtils
+        [background_tasks.py] as BackgroundTasks
+    }
+
+    package "strategies" {
+        [ma_calculators.py] as MACalculators
+    }
+
+    package "config" as ConfigPackage {
+        [__init__.py] as ConfigInit
+    }
+}
+
+' External Dependencies
+package "External Libraries" as External {
+    [pandas] as Pandas
+    [numpy] as Numpy
+    [scikit-learn] as SKLearn
+    [tensorflow/keras] as TensorFlow
+    [aiohttp] as Aiohttp
+    [asyncio] as Asyncio
+    [PyQt5] as PyQt5
+    [loguru] as Loguru
+    [pydantic] as Pydantic
+    [sqlalchemy] as SQLAlchemy
+}
+
+' Core Dependencies
+TradingEngine --> CoreInterfaces
+TradingEngine --> CoreModels
+TradingEngine --> OrderExecutor
+TradingEngine --> RiskManager
+TradingEngine --> EventBus
+TradingEngine --> ConfigManager
+TradingEngine --> AccountState
+
+OrderExecutor --> CoreInterfaces
+OrderExecutor --> CoreModels
+OrderExecutor --> Exceptions
+
+RiskManager --> CoreInterfaces
+RiskManager --> CoreModels
+RiskManager --> Constants
+
+EventBus --> CoreInterfaces
+AccountState --> CoreInterfaces
+AccountState --> EventBus
+
+' Agent Dependencies
+BaseAgent --> CoreInterfaces
+BaseAgent --> CoreModels
+BaseAgent --> Exceptions
+
+AgentManager --> BaseAgent
+AgentFactory --> BaseAgent
+
+TechStrategy --> CoreInterfaces
+TechStrategy --> CoreModels
+
+RSIAgent --> BaseAgent
+RSIAgent --> TechStrategy
+MACDAgent --> BaseAgent
+MACDAgent --> TechStrategy
+MAAgent --> BaseAgent
+MAAgent --> TechStrategy
+BBAgent --> BaseAgent
+BBAgent --> TechStrategy
+
+MLStrategy --> CoreInterfaces
+MLStrategy --> CoreModels
+MLStrategy --> Preprocessor
+
+RFAgent --> BaseAgent
+RFAgent --> MLStrategy
+RFAgent --> RFStrategy
+LSTMAgent --> BaseAgent
+LSTMAgent --> MLStrategy
+
+MLTrainer --> MLStrategy
+
+' Exchange Dependencies
+BaseExchange --> CoreInterfaces
+BaseExchange --> CoreModels
+BaseExchange --> Exceptions
+
+BlofinExchange --> BaseExchange
+BlofinExchange --> BlofinClient
+BlofinExchange --> TypeConverter
+
+TypeConverter --> CoreModels
+
+' Data Dependencies
+DataManager --> CoreInterfaces
+DataManager --> HistoricalProvider
+DataManager --> RealtimeFeed
+DataManager --> Preprocessor
+DataManager --> DataStorage
+
+HistoricalProvider --> CoreInterfaces
+HistoricalProvider --> DataStorage
+RealtimeFeed --> CoreInterfaces
+Preprocessor --> FeatureEngineer
+Collector --> CoreInterfaces
+Collector --> DataStorage
+
+' GUI Dependencies
+MainWindow --> TradingEngine
+MainWindow --> EventBus
+MainWindow --> ConfigManager
+
+' Security Dependencies
+CredentialManager --> Exceptions
+
+' Strategy Dependencies
+MACalculators --> Pandas
+TechStrategy --> MACalculators
+
+' Cross-Layer Dependencies
+TradingEngine --> AgentManager
+TradingEngine --> BaseExchange
+TradingEngine --> DataManager
+
+AgentManager --> AgentFactory
+OrderExecutor --> BaseExchange
+
+DataManager --> BaseExchange
+
+' External Library Dependencies
+Pandas --> Numpy
+SKLearn --> Numpy
+TensorFlow --> Numpy
+
+TechStrategy --> Pandas
+MLStrategy --> Pandas
+MLStrategy --> SKLearn
+MLStrategy --> TensorFlow
+
+Preprocessor --> Pandas
+FeatureEngineer --> Pandas
+FeatureEngineer --> Numpy
+
+BlofinClient --> Aiohttp
+BlofinClient --> Asyncio
+TradingEngine --> Asyncio
+DataManager --> Asyncio
+
+MainWindow --> PyQt5
+
+Logging --> Loguru
+CoreModels --> Pydantic
+DataStorage --> SQLAlchemy
+
+note top of core
+    **Core Package**
+
+    Responsibilities:
+    - Define interfaces
+    - Define domain models
+    - Implement trading engine
+    - Manage orders and risk
+    - Event-driven coordination
+
+    No dependencies on:
+    - Agents (uses interfaces)
+    - Exchange (uses interfaces)
+    - Data (uses interfaces)
+end note
+
+note top of agents
+    **Agents Package**
+
+    Responsibilities:
+    - Implement trading strategies
+    - Generate trading signals
+    - Manage agent lifecycle
+
+    Types:
+    - Technical analysis
+    - Machine learning
+    - Deep learning
+
+    Depends on:
+    - Core (interfaces, models)
+    - Data (for preprocessing)
+end note
+
+note bottom of exchange
+    **Exchange Package**
+
+    Responsibilities:
+    - Connect to exchanges
+    - Execute orders
+    - Fetch market data
+    - Manage positions
+
+    Implements:
+    - Template Method pattern
+    - Adapter pattern
+
+    Depends on:
+    - Core (interfaces, models)
+end note
+
+note bottom of data
+    **Data Package**
+
+    Responsibilities:
+    - Fetch historical data
+    - Stream realtime data
+    - Preprocess data
+    - Engineer features
+    - Store data
+
+    Implements:
+    - Facade pattern
+    - Repository pattern
+
+    Depends on:
+    - Core (interfaces, models)
+    - Exchange (for data fetching)
+end note
+
+note right of gui
+    **GUI Package**
+
+    Responsibilities:
+    - User interface
+    - Real-time visualization
+    - System control
+    - Configuration
+
+    Framework: PyQt5
+
+    Depends on:
+    - Core (all components)
+    - EventBus (for updates)
+end note
+
+note bottom of utils
+    **Utils Package**
+
+    Responsibilities:
+    - Logging utilities
+    - Decorators
+    - Validators
+    - Common utilities
+
+    No business logic
+    Pure utility functions
+
+    Used by: All packages
+end note
+
+note right of External
+    **External Dependencies**
+
+    Data Science:
+    - pandas, numpy
+    - scikit-learn
+    - tensorflow/keras
+
+    Async/Network:
+    - asyncio, aiohttp
+
+    UI:
+    - PyQt5
+
+    Logging:
+    - loguru
+
+    Validation:
+    - pydantic
+
+    Database:
+    - sqlalchemy
+end note
+
+@enduml

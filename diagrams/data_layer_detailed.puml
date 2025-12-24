@@ -1,0 +1,440 @@
+@startuml Data_Layer_Detailed
+!theme plain
+
+title Data Layer - Market Data Management Architecture
+
+' Core Data Interfaces
+interface IDataProvider {
+    + {abstract} get_historical_data(symbol, timeframe, start, end): List[MarketData]
+    + {abstract} get_realtime_data(symbol): MarketData
+    + {abstract} get_data_range(symbol): Dict[str, datetime]
+}
+
+interface IDataCollector {
+    + {abstract} collect_data(symbol: str, timeframe: str): List[MarketData]
+    + {abstract} store_data(data: List[MarketData]): None
+}
+
+interface IDataStorage {
+    + {abstract} save_market_data(data: List[MarketData]): None
+    + {abstract} save_order(order: Order): None
+    + {abstract} save_position(position: Position): None
+}
+
+interface IDataProcessor {
+    + {abstract} preprocess(data: List[MarketData]): List[MarketData]
+    + {abstract} calculate_features(data: List[MarketData]): Dict[str, List[float]]
+}
+
+' Data Manager (Facade)
+class DataManager {
+    - historical_provider: HistoricalDataProvider
+    - realtime_feed: RealtimeFeed
+    - preprocessor: DataPreprocessor
+    - storage: DataStorage
+    - feature_engineer: FeatureEngineer
+    - _subscriptions: Dict[str, List[Callable]]
+    - _active_symbols: Set[str]
+    - _data_cache: Dict[str, List[MarketData]]
+    - _cache_size: int
+    - logger: Logger
+
+    ' Lifecycle
+    + initialize(): None
+    + shutdown(): None
+
+    ' Data Retrieval
+    + get_historical_data(symbol, timeframe, start, end, use_cache): List[MarketData]
+    + get_realtime_data(symbol): MarketData
+    + get_cached_data(symbol, limit): List[MarketData]
+    + get_data_range(symbol): Dict[str, datetime]
+
+    ' Subscriptions
+    + subscribe_to_data(symbols: List[str], callback: Callable): None
+    + unsubscribe_from_data(symbols: List[str]): None
+    + get_subscribed_symbols(): List[str]
+    + get_subscription_count(): int
+
+    ' Data Management
+    + preload_data(symbols: List[str], timeframe: str, days_back: int): None
+    + get_data_statistics(symbol: str): Dict
+    + cleanup_old_data(days_to_keep: int): None
+
+    ' Private Methods
+    - _data_callback(symbol: str, data: MarketData): None
+    - _update_cache(symbol: str, data: MarketData): None
+}
+
+DataManager ..|> IDataProvider
+
+' Historical Data Provider
+class HistoricalDataProvider {
+    - exchange_client: IExchangeClient
+    - storage: DataStorage
+    - cache: Dict[str, List[MarketData]]
+    - cache_ttl: int
+    - logger: Logger
+
+    + initialize(): None
+    + shutdown(): None
+    + get_historical_data(symbol, timeframe, start, end): List[MarketData]
+    + get_data_range(symbol): Dict[str, datetime]
+    + refresh_cache(symbol, timeframe): None
+
+    - _fetch_from_exchange(symbol, timeframe, start, end): List[MarketData]
+    - _fetch_from_storage(symbol, timeframe, start, end): List[MarketData]
+    - _cache_data(symbol, data): None
+    - _is_cache_valid(symbol, timeframe): bool
+    - _merge_data_sources(storage_data, exchange_data): List[MarketData]
+}
+
+' Realtime Feed
+class RealtimeFeed {
+    - exchange_client: IExchangeClient
+    - _subscriptions: Dict[str, List[Callable]]
+    - _websocket_connection: WebSocketClient
+    - _is_running: bool
+    - _update_interval: float
+    - logger: Logger
+
+    + initialize(): None
+    + shutdown(): None
+    + subscribe(symbol: str, callback: Callable): None
+    + unsubscribe(symbol: str): None
+    + get_current_data(symbol: str): MarketData
+    + is_subscribed(symbol: str): bool
+
+    - _start_websocket(): None
+    - _stop_websocket(): None
+    - _handle_message(message: Dict): None
+    - _notify_subscribers(symbol: str, data: MarketData): None
+    - _poll_data(symbol: str): None
+}
+
+' Data Preprocessor
+class DataPreprocessor {
+    - normalization_method: str
+    - handle_missing: str
+    - outlier_threshold: float
+    - logger: Logger
+
+    ' Processing Pipeline
+    + process_historical_data(data: List[MarketData]): List[MarketData]
+    + process_realtime_data(data: MarketData): MarketData
+    + create_features_for_ml(data: List[MarketData]): DataFrame
+
+    ' Individual Steps
+    + normalize_data(data: List[MarketData]): List[MarketData]
+    + handle_missing_values(data: List[MarketData]): List[MarketData]
+    + remove_outliers(data: List[MarketData], threshold: float): List[MarketData]
+    + validate_data(data: List[MarketData]): bool
+
+    ' Technical Indicators
+    + calculate_technical_indicators(df: DataFrame): DataFrame
+    + add_volume_indicators(df: DataFrame): DataFrame
+    + add_price_patterns(df: DataFrame): DataFrame
+
+    ' Private Methods
+    - _fill_missing_forward(data: List[MarketData]): List[MarketData]
+    - _fill_missing_interpolate(data: List[MarketData]): List[MarketData]
+    - _detect_outliers(data: List[MarketData]): List[int]
+    - _normalize_min_max(values: List[float]): List[float]
+    - _normalize_zscore(values: List[float]): List[float]
+}
+
+DataPreprocessor ..|> IDataProcessor
+
+' Feature Engineer
+class FeatureEngineer {
+    - feature_config: Dict
+    - logger: Logger
+
+    ' Feature Creation
+    + create_features_for_ml(data: List[MarketData]): DataFrame
+    + create_price_features(df: DataFrame): DataFrame
+    + create_volume_features(df: DataFrame): DataFrame
+    + create_momentum_features(df: DataFrame): DataFrame
+    + create_volatility_features(df: DataFrame): DataFrame
+    + create_trend_features(df: DataFrame): DataFrame
+
+    ' Advanced Features
+    + create_lagged_features(df: DataFrame, lags: List[int]): DataFrame
+    + create_rolling_statistics(df: DataFrame, windows: List[int]): DataFrame
+    + create_datetime_features(df: DataFrame): DataFrame
+    + create_interaction_features(df: DataFrame): DataFrame
+
+    ' Feature Selection
+    + select_features(df: DataFrame, method: str): List[str]
+    + get_feature_importance(df: DataFrame, target: str): Dict[str, float]
+
+    ' Private Methods
+    - _calculate_returns(prices: Series): Series
+    - _calculate_log_returns(prices: Series): Series
+    - _calculate_rsi(prices: Series, period: int): Series
+    - _calculate_macd_features(prices: Series): DataFrame
+    - _calculate_bollinger_features(prices: Series): DataFrame
+}
+
+' Data Storage
+abstract class DataStorage {
+    # db_path: str
+    # db_connection: Any
+    # table_prefix: str
+    # logger: Logger
+
+    + {abstract} initialize(): None
+    + {abstract} shutdown(): None
+
+    ' Market Data Operations
+    + store_historical_data(data: List[MarketData]): None
+    + store_realtime_data(data: MarketData): None
+    + get_historical_data(symbol, timeframe, start, end): List[MarketData]
+
+    ' Order Operations
+    + save_order(order: Order): None
+    + get_orders(symbol: str, start: datetime, end: datetime): List[Order]
+    + update_order_status(order_id: str, status: OrderStatus): None
+
+    ' Position Operations
+    + save_position(position: Position): None
+    + get_positions(symbol: str): List[Position]
+    + update_position(position: Position): None
+
+    ' Statistics & Maintenance
+    + get_data_statistics(symbol: str): Dict
+    + get_available_symbols(): List[str]
+    + get_date_range(symbol: str): Tuple[datetime, datetime]
+    + cleanup_old_data(cutoff_date: datetime): None
+
+    # {abstract} _create_tables(): None
+    # {abstract} _insert_market_data(data: MarketData): None
+    # {abstract} _query_market_data(symbol, timeframe, start, end): List[MarketData]
+    # {abstract} _execute_query(query: str, params: Tuple): Any
+}
+
+DataStorage ..|> IDataStorage
+
+' SQLite Storage Implementation
+class SQLiteStorage {
+    - db_file: str
+    - connection: sqlite3.Connection
+
+    + initialize(): None
+    + shutdown(): None
+
+    # _create_tables(): None
+    # _insert_market_data(data: MarketData): None
+    # _query_market_data(symbol, timeframe, start, end): List[MarketData]
+    # _execute_query(query: str, params: Tuple): Any
+
+    - _create_indices(): None
+    - _optimize_database(): None
+    - _backup_database(backup_path: str): None
+}
+
+DataStorage <|-- SQLiteStorage
+
+' PostgreSQL Storage Implementation
+class PostgreSQLStorage {
+    - host: str
+    - port: int
+    - database: str
+    - user: str
+    - password: str
+    - connection_pool: psycopg2.pool
+
+    + initialize(): None
+    + shutdown(): None
+
+    # _create_tables(): None
+    # _insert_market_data(data: MarketData): None
+    # _query_market_data(symbol, timeframe, start, end): List[MarketData]
+    # _execute_query(query: str, params: Tuple): Any
+
+    - _create_partitions(): None
+    - _optimize_indices(): None
+    - _vacuum_analyze(): None
+}
+
+DataStorage <|-- PostgreSQLStorage
+
+' Market Data Collector
+class MarketDataCollector {
+    - exchange_client: IExchangeClient
+    - storage: DataStorage
+    - symbols: List[str]
+    - timeframes: List[str]
+    - collection_interval: int
+    - _is_running: bool
+    - logger: Logger
+
+    + start_collection(): None
+    + stop_collection(): None
+    + collect_data(symbol: str, timeframe: str): List[MarketData]
+    + store_data(data: List[MarketData]): None
+    + collect_and_store(symbol: str, timeframe: str): None
+
+    - _collection_loop(): None
+    - _collect_for_symbol(symbol: str): None
+    - _handle_collection_error(error: Exception, symbol: str): None
+}
+
+MarketDataCollector ..|> IDataCollector
+
+' WebSocket Client
+class WebSocketClient {
+    - url: str
+    - _ws: websockets.WebSocketClientProtocol
+    - _is_connected: bool
+    - _reconnect_delay: int
+    - _message_handlers: List[Callable]
+    - logger: Logger
+
+    + connect(): None
+    + disconnect(): None
+    + subscribe(channel: str, symbol: str): None
+    + unsubscribe(channel: str, symbol: str): None
+    + add_message_handler(handler: Callable): None
+    + is_connected(): bool
+
+    - _receive_loop(): None
+    - _handle_message(message: str): None
+    - _reconnect(): None
+    - _send(message: Dict): None
+}
+
+RealtimeFeed --> WebSocketClient : uses
+
+' Data Cache
+class DataCache {
+    - _cache: Dict[str, List[MarketData]]
+    - _cache_size: int
+    - _ttl: int
+    - _last_access: Dict[str, float]
+
+    + get(key: str): List[MarketData]
+    + set(key: str, data: List[MarketData]): None
+    + invalidate(key: str): None
+    + clear(): None
+    + is_valid(key: str): bool
+    + get_size(): int
+    + cleanup_expired(): None
+
+    - _evict_lru(): None
+    - _is_expired(key: str): bool
+}
+
+DataManager --> DataCache : uses
+HistoricalDataProvider --> DataCache : uses
+
+' Data Models
+class MarketData <<dataclass>> {
+    + symbol: str
+    + timestamp: datetime
+    + open: Decimal
+    + high: Decimal
+    + low: Decimal
+    + close: Decimal
+    + volume: Decimal
+    + bid: Decimal
+    + ask: Decimal
+}
+
+class OHLCV <<dataclass>> {
+    + timestamp: datetime
+    + open: float
+    + high: float
+    + low: float
+    + close: float
+    + volume: float
+}
+
+' Relationships
+DataManager --> HistoricalDataProvider : uses
+DataManager --> RealtimeFeed : uses
+DataManager --> DataPreprocessor : uses
+DataManager --> DataStorage : uses
+DataManager --> FeatureEngineer : uses
+
+HistoricalDataProvider --> IExchangeClient : fetches from
+HistoricalDataProvider --> DataStorage : reads from
+RealtimeFeed --> IExchangeClient : subscribes to
+
+DataPreprocessor --> FeatureEngineer : delegates to
+
+MarketDataCollector --> IExchangeClient : collects from
+MarketDataCollector --> DataStorage : stores to
+
+note top of DataManager
+    **Facade Pattern**
+
+    Provides unified interface for:
+    - Historical data
+    - Real-time data
+    - Data preprocessing
+    - Data storage
+    - Feature engineering
+
+    Benefits:
+    - Simple API for clients
+    - Coordinates complex subsystem
+    - Hides implementation details
+end note
+
+note right of HistoricalDataProvider
+    **Caching Strategy**
+
+    Three-tier data retrieval:
+    1. Check in-memory cache
+    2. Check database storage
+    3. Fetch from exchange API
+
+    Benefits:
+    - Fast access
+    - Reduced API calls
+    - Cost efficient
+end note
+
+note bottom of DataPreprocessor
+    **Pipeline Pattern**
+
+    Processing steps:
+    1. Validate data
+    2. Handle missing values
+    3. Remove outliers
+    4. Normalize values
+    5. Calculate features
+
+    Each step is independent
+    and reusable.
+end note
+
+note left of FeatureEngineer
+    **Feature Engineering**
+
+    Categories:
+    - Price features (returns, momentum)
+    - Volume features (volume changes)
+    - Volatility features (ATR, std)
+    - Trend features (MA, slopes)
+    - Lagged features (historical)
+    - Interaction features (products)
+
+    For ML model training
+end note
+
+note bottom of DataStorage
+    **Repository Pattern**
+
+    Abstract data persistence:
+    - SQLite for development
+    - PostgreSQL for production
+    - Easy to switch
+
+    Benefits:
+    - Database agnostic
+    - Testable with in-memory
+    - Consistent interface
+end note
+
+@enduml
