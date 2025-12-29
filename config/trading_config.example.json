@@ -2,29 +2,30 @@
   "trading": {
     "enabled": false,
     "symbols": [
-      "BTC/USDT",
-      "ETH/USDT"
+      "BTC-USDT",
+      "ETH-USDT"
     ],
     "default_agent": "RSI Agent",
-    "loop_interval": 10,
-    "analysis_lookback_hours": 24
+    "loop_interval": 5,
+    "analysis_lookback_hours": 120
   },
   "exchange": {
     "name": "blofin",
     "sandbox": true,
-    "api_key": "",
-    "api_secret": "",
-    "passphrase": "",
+    "api_key": "YOUR_API_KEY_HERE",
+    "api_secret": "YOUR_API_SECRET_HERE",
+    "passphrase": "YOUR_PASSPHRASE_HERE",
     "rate_limit": 10,
-    "timeout": 30
+    "timeout": 30,
+    "comment": "Use 'mock' for testing or 'blofin' for real sandbox trading. Copy this file to trading_config.json and add your API keys."
   },
   "risk": {
     "max_position_size_pct": 0.1,
     "max_daily_loss_pct": 0.05,
     "max_total_exposure_pct": 0.5,
-    "min_confidence_threshold": 0.6,
-    "max_positions_per_symbol": 1,
-    "max_total_positions": 5,
+    "min_confidence_threshold": 0.25,
+    "max_positions_per_symbol": 3,
+    "max_total_positions": 10,
     "stop_loss_pct": 0.02,
     "take_profit_pct": 0.06,
     "min_order_size": 10.0,
@@ -35,21 +36,21 @@
   "agents": {
     "rsi": {
       "rsi_period": 14,
-      "oversold_threshold": 30,
-      "overbought_threshold": 70,
-      "minimum_confidence": 0.6
+      "oversold_threshold": 35,
+      "overbought_threshold": 65,
+      "minimum_confidence": 0.25
     },
     "macd": {
       "fast_period": 12,
       "slow_period": 26,
       "signal_period": 9,
-      "minimum_confidence": 0.5,
+      "minimum_confidence": 0.25,
       "use_histogram": true
     },
     "random_forest": {
       "n_estimators": 100,
       "max_depth": 10,
-      "prediction_threshold": 0.6,
+      "prediction_threshold": 0.35,
       "lookback_periods": 20,
       "retrain_interval": 24
     }
