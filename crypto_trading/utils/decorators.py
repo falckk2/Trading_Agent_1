@@ -133,7 +133,7 @@ def validate_order(func: Callable) -> Callable:
         if hasattr(order, 'symbol') and not order.symbol:
             raise ValueError("Order must have a symbol")
 
-        if hasattr(order, 'quantity') and order.quantity <= 0:
+        if hasattr(order, 'amount') and order.amount <= 0:
             raise ValueError("Order quantity must be positive")
 
         return await func(self, order, *args, **kwargs)
@@ -146,7 +146,7 @@ def validate_order(func: Callable) -> Callable:
         if hasattr(order, 'symbol') and not order.symbol:
             raise ValueError("Order must have a symbol")
 
-        if hasattr(order, 'quantity') and order.quantity <= 0:
+        if hasattr(order, 'amount') and order.amount <= 0:
             raise ValueError("Order quantity must be positive")
 
         return func(self, order, *args, **kwargs)

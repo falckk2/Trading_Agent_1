@@ -19,6 +19,7 @@ from crypto_trading.core.event_bus import EventBus
 from crypto_trading.core.risk_manager import RiskManager
 from crypto_trading.core.agent_manager import AgentManager
 from crypto_trading.exchange.blofin_client import BlofinClient
+from crypto_trading.utils.agent_initializer import initialize_agents
 from loguru import logger
 
 
@@ -46,7 +47,7 @@ def run_gui():
     """Run the GUI interface."""
     try:
         logger.info("Starting GUI interface...")
-        from crypto_trading.gui.main_window import TradingGUI
+        from crypto_trading.gui import TradingGUI
         app = TradingGUI()
         app.run()
     except Exception as e:
@@ -65,6 +66,9 @@ async def run_cli():
         event_bus = EventBus()
         risk_manager = RiskManager(config_manager)
         agent_manager = AgentManager()
+
+        # Initialize and register trading agents
+        initialize_agents(agent_manager, config_manager)
 
         # Get exchange configuration
         exchange_config = config_manager.get_section('exchange')

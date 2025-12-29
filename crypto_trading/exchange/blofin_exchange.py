@@ -84,7 +84,7 @@ class BlofinExchange(BaseExchange):
             "tdMode": "cash",  # Cash trading mode
             "side": order.side.value,
             "ordType": self._convert_order_type(order.order_type),
-            "sz": str(order.quantity)
+            "sz": str(order.amount)
         }
 
         if order.price:

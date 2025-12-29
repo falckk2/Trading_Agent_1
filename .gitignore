@@ -87,6 +87,7 @@ backtest_results/
 api_keys.json
 credentials.json
 secrets.json
+config/trading_config.json
 
 # Temporary files
 temp/

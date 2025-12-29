@@ -233,7 +233,7 @@ class BaseExchange(IExchangeClient):
 
     def _validate_order(self, order: Order) -> None:
         """Validate order parameters."""
-        if order.quantity <= 0:
+        if order.amount <= 0:
             raise OrderException("Order quantity must be positive")
 
         if order.order_type == OrderType.LIMIT and (not order.price or order.price <= 0):

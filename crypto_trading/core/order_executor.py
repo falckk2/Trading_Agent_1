@@ -87,6 +87,13 @@ class OrderExecutor:
         Returns:
             The created order
         """
+        # Include agent information in order metadata
+        metadata = {
+            'agent_name': signal.strategy_name,
+            'confidence': signal.confidence,
+            'signal_timestamp': signal.timestamp.isoformat()
+        }
+
         return Order(
             id="",  # Will be set by exchange
             symbol=signal.symbol,
@@ -95,7 +102,8 @@ class OrderExecutor:
             amount=position_size,
             price=signal.price,
             status=OrderStatus.PENDING,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            metadata=metadata
         )
 
 

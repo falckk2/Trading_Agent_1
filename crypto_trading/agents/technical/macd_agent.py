@@ -41,6 +41,7 @@ class MACDAgent(BaseAgent):
 
     async def analyze(self, market_data: List[MarketData]) -> TradingSignal:
         """Analyze market data and generate MACD-based trading signals."""
+        logger.info(f"🔵 MACD Agent analyzing {len(market_data)} data points...")
         self._ensure_initialized()
         self._validate_market_data(market_data)
 
@@ -94,6 +95,7 @@ class MACDAgent(BaseAgent):
                 "signal_type": "macd_crossover"
             })
 
+            logger.info(f"🔵 MACD Agent → {signal.action.value} {signal.symbol} (confidence: {signal.confidence:.2%}, reason: {signal.metadata.get('signal_reason', 'unknown')})")
             logger.debug(f"MACD Analysis: MACD={current_macd:.4f}, Signal={current_signal:.4f}, "
                         f"Histogram={current_histogram:.4f}, Action={signal.action}, Confidence={signal.confidence:.2f}")
             return signal
@@ -121,6 +123,8 @@ class MACDAgent(BaseAgent):
             confidence = self._calculate_crossover_confidence(
                 current_macd, current_signal, current_histogram, True
             )
+            # Boost confidence for testing
+            confidence = max(0.5, min(confidence * 1.5, 0.95))
             return self._create_signal(
                 symbol=symbol,
                 action=OrderSide.BUY,
@@ -134,6 +138,8 @@ class MACDAgent(BaseAgent):
             confidence = self._calculate_crossover_confidence(
                 current_macd, current_signal, current_histogram, False
             )
+            # Boost confidence for testing
+            confidence = max(0.5, min(confidence * 1.5, 0.95))
             return self._create_signal(
                 symbol=symbol,
                 action=OrderSide.SELL,
@@ -149,6 +155,8 @@ class MACDAgent(BaseAgent):
             )
             if histogram_signal:
                 confidence = self._calculate_histogram_confidence(current_histogram, previous_histogram)
+                # Boost confidence for testing
+                confidence = max(0.5, min(confidence * 1.5, 0.9))
                 return self._create_signal(
                     symbol=symbol,
                     action=histogram_signal,
@@ -163,6 +171,8 @@ class MACDAgent(BaseAgent):
         )
         if zero_line_signal:
             confidence = self._calculate_zero_line_confidence(current_macd)
+            # Boost confidence for testing
+            confidence = max(0.6, min(confidence * 1.3, 0.95))
             return self._create_signal(
                 symbol=symbol,
                 action=zero_line_signal,
@@ -171,14 +181,30 @@ class MACDAgent(BaseAgent):
                 metadata={"signal_reason": "macd_zero_line_crossover"}
             )
 
-        # No clear signal
-        return self._create_signal(
-            symbol=symbol,
-            action=OrderSide.BUY,  # Default action
-            confidence=0.0,
-            price=current_price,
-            metadata={"signal_reason": "no_signal"}
-        )
+        # No crossover detected - use current MACD position for signal (for testing)
+        # This makes the agent always active instead of waiting for crossovers
+        if current_macd > current_signal:
+            # MACD above signal line = bullish
+            strength = min(abs(current_macd - current_signal) / 0.01, 1.0)
+            confidence = max(0.4, min(0.6, strength * 0.7))
+            return self._create_signal(
+                symbol=symbol,
+                action=OrderSide.BUY,
+                confidence=confidence,
+                price=current_price,
+                metadata={"signal_reason": "macd_above_signal"}
+            )
+        else:
+            # MACD below signal line = bearish
+            strength = min(abs(current_macd - current_signal) / 0.01, 1.0)
+            confidence = max(0.4, min(0.6, strength * 0.7))
+            return self._create_signal(
+                symbol=symbol,
+                action=OrderSide.SELL,
+                confidence=confidence,
+                price=current_price,
+                metadata={"signal_reason": "macd_below_signal"}
+            )
 
     def _calculate_crossover_confidence(
         self, macd: float, signal: float, histogram: float, is_bullish: bool
@@ -187,28 +213,29 @@ class MACDAgent(BaseAgent):
         # Base confidence from the magnitude of the crossover
         crossover_magnitude = abs(macd - signal)
 
-        # Normalize to 0-1 range (assuming typical MACD values)
-        base_confidence = min(crossover_magnitude / 0.01, 1.0)
+        # Normalize to 0-1 range (more sensitive - smaller denominator)
+        base_confidence = min(crossover_magnitude / 0.001, 1.0)  # Changed from 0.01 to 0.001
+        base_confidence = base_confidence * 0.5 + 0.4  # Boost base confidence (0.4-0.9 range)
 
         # Adjust based on histogram direction
         if is_bullish:
             if histogram > 0:
-                base_confidence *= 1.2  # Histogram confirms bullish signal
+                base_confidence *= 1.1  # Histogram confirms bullish signal
             else:
-                base_confidence *= 0.8  # Histogram diverges from signal
+                base_confidence *= 0.95  # Histogram diverges from signal (less penalty)
         else:
             if histogram < 0:
-                base_confidence *= 1.2  # Histogram confirms bearish signal
+                base_confidence *= 1.1  # Histogram confirms bearish signal
             else:
-                base_confidence *= 0.8  # Histogram diverges from signal
+                base_confidence *= 0.95  # Histogram diverges from signal (less penalty)
 
         # Adjust based on MACD line position relative to zero
         if is_bullish and macd > 0:
-            base_confidence *= 1.1  # Bullish signal above zero line
+            base_confidence *= 1.05  # Bullish signal above zero line
         elif not is_bullish and macd < 0:
-            base_confidence *= 1.1  # Bearish signal below zero line
+            base_confidence *= 1.05  # Bearish signal below zero line
 
-        return max(0.3, min(base_confidence, 0.9))
+        return max(0.4, min(base_confidence, 0.95))  # Higher minimum confidence
 
     def _analyze_histogram(
         self, current_histogram: float, previous_histogram: float,
@@ -243,13 +270,13 @@ class MACDAgent(BaseAgent):
         """Calculate confidence for histogram-based signals."""
         histogram_change = abs(current_histogram - previous_histogram)
 
-        # Normalize the change (typical histogram changes are small)
-        normalized_change = min(histogram_change / 0.005, 1.0)
+        # Normalize the change (more sensitive to small changes)
+        normalized_change = min(histogram_change / 0.001, 1.0)  # Changed from 0.005
 
-        # Base confidence is lower for histogram signals as they're earlier
-        base_confidence = normalized_change * 0.6
+        # Base confidence boosted for more signals
+        base_confidence = normalized_change * 0.5 + 0.4  # Higher base
 
-        return max(0.2, min(base_confidence, 0.7))
+        return max(0.4, min(base_confidence, 0.8))  # Higher range
 
     def _analyze_zero_line_crossover(self, current_macd: float, previous_macd: float) -> OrderSide:
         """Analyze MACD zero line crossovers."""
@@ -268,13 +295,13 @@ class MACDAgent(BaseAgent):
         # Confidence based on how far MACD has moved from zero
         distance_from_zero = abs(current_macd)
 
-        # Normalize (typical MACD values range from -0.1 to 0.1)
-        normalized_distance = min(distance_from_zero / 0.01, 1.0)
+        # Normalize (more sensitive to smaller movements)
+        normalized_distance = min(distance_from_zero / 0.001, 1.0)  # Changed from 0.01
 
-        # Zero line crossovers are strong signals
-        base_confidence = 0.5 + (normalized_distance * 0.3)
+        # Zero line crossovers are strong signals - boosted confidence
+        base_confidence = 0.6 + (normalized_distance * 0.3)
 
-        return max(0.4, min(base_confidence, 0.8))
+        return max(0.5, min(base_confidence, 0.9))  # Higher range
 
     def _create_neutral_signal(self, market_data: List[MarketData]) -> TradingSignal:
         """Create a neutral signal when analysis fails."""

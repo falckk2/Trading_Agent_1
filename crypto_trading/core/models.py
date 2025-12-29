@@ -293,7 +293,7 @@ class PerformanceMetrics(BaseModel):
     volatility: float = Field(..., description="Strategy volatility")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "total_return": 15.5,
                 "sharpe_ratio": 1.2,

@@ -8,6 +8,7 @@ import json
 import hmac
 import hashlib
 import base64
+import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from decimal import Decimal
@@ -38,8 +39,8 @@ class BlofinClient(BaseExchange):
         self.passphrase = passphrase
         self.type_converter = type_converter or BlofinTypeConverter()
 
-        self.base_url = "https://openapi.blofin.com" if not sandbox else "https://sandbox-openapi.blofin.com"
-        self.ws_url = "wss://openapi.blofin.com/ws/v1/stream" if not sandbox else "wss://sandbox-openapi.blofin.com/ws/v1/stream"
+        self.base_url = "https://openapi.blofin.com" if not sandbox else "https://demo-trading-openapi.blofin.com"
+        self.ws_url = "wss://openapi.blofin.com/ws/v1/stream" if not sandbox else "wss://demo-trading-openapi.blofin.com/ws/public"
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws_connection: Optional[websockets.WebSocketServerProtocol] = None
@@ -77,17 +78,14 @@ class BlofinClient(BaseExchange):
 
     async def _get_market_data_impl(self, symbol: str) -> MarketData:
         """Get current market data for a symbol."""
-        # Get ticker data
-        ticker_response = await self._make_request("GET", f"/api/v1/market/ticker", {"instId": symbol})
+        # Get ticker data (note: endpoint is /tickers plural)
+        ticker_response = await self._make_request("GET", "/api/v1/market/tickers", {"instId": symbol})
         if ticker_response.get("code") != "0":
             raise ExchangeError(f"Failed to get ticker data: {ticker_response}")
 
         ticker_data = ticker_response["data"][0]
 
-        # Get order book for bid/ask
-        orderbook_response = await self._make_request("GET", f"/api/v1/market/books", {"instId": symbol})
-        orderbook_data = orderbook_response["data"][0] if orderbook_response.get("code") == "0" else {}
-
+        # Ticker already includes bid/ask prices, no need for separate orderbook request
         return MarketData(
             symbol=symbol,
             timestamp=datetime.fromtimestamp(int(ticker_data["ts"]) / 1000),
@@ -96,8 +94,8 @@ class BlofinClient(BaseExchange):
             low=Decimal(ticker_data["low24h"]),
             close=Decimal(ticker_data["last"]),
             volume=Decimal(ticker_data["vol24h"]),
-            bid=Decimal(orderbook_data["bids"][0][0]) if orderbook_data.get("bids") else None,
-            ask=Decimal(orderbook_data["asks"][0][0]) if orderbook_data.get("asks") else None
+            bid=Decimal(ticker_data["bidPrice"]) if ticker_data.get("bidPrice") else None,
+            ask=Decimal(ticker_data["askPrice"]) if ticker_data.get("askPrice") else None
         )
 
     async def _get_historical_data_impl(
@@ -197,15 +195,16 @@ class BlofinClient(BaseExchange):
 
         positions = []
         for pos_data in response["data"]:
-            if Decimal(pos_data["pos"]) != 0:  # Only include non-zero positions
+            position_size = Decimal(pos_data["positions"])
+            if position_size != 0:  # Only include non-zero positions
                 positions.append(Position(
                     symbol=pos_data["instId"],
-                    side=OrderSide.BUY if Decimal(pos_data["pos"]) > 0 else OrderSide.SELL,
-                    amount=abs(Decimal(pos_data["pos"])),
-                    entry_price=Decimal(pos_data["avgPx"]),
-                    current_price=Decimal(pos_data["last"]),
-                    pnl=Decimal(pos_data["upl"]),
-                    timestamp=datetime.fromtimestamp(int(pos_data["uTime"]) / 1000)
+                    side=OrderSide.BUY if position_size > 0 else OrderSide.SELL,
+                    amount=abs(position_size),
+                    entry_price=Decimal(pos_data["averagePrice"]),
+                    current_price=Decimal(pos_data["markPrice"]),
+                    pnl=Decimal(pos_data["unrealizedPnl"]),
+                    timestamp=datetime.fromtimestamp(int(pos_data["updateTime"]) / 1000)
                 ))
 
         return positions
@@ -217,9 +216,10 @@ class BlofinClient(BaseExchange):
             raise ExchangeError(f"Failed to get balance: {response}")
 
         balance = {}
-        for balance_data in response["data"][0]["details"]:
-            currency = balance_data["ccy"]
-            available = Decimal(balance_data["availBal"])
+        # Response structure: {"code": "0", "data": {"details": [...]}}
+        for balance_data in response["data"]["details"]:
+            currency = balance_data["currency"]
+            available = Decimal(balance_data["available"])
             balance[currency] = available
 
         return balance
@@ -231,31 +231,37 @@ class BlofinClient(BaseExchange):
 
         url = self.base_url + endpoint
         timestamp = str(int(datetime.now().timestamp() * 1000))
+        nonce = str(uuid.uuid4())
 
         # Prepare request data
         if method == "GET":
             query_string = "&".join([f"{k}={v}" for k, v in (params or {}).items()])
             request_path = endpoint + ("?" + query_string if query_string else "")
-            data = ""
+            body = ""
         else:
             request_path = endpoint
-            data = json.dumps(params or {})
+            body = json.dumps(params or {})
 
-        # Create signature
-        message = timestamp + method + request_path + data
-        signature = base64.b64encode(
-            hmac.new(
-                self.api_secret.encode(),
-                message.encode(),
-                hashlib.sha256
-            ).digest()
-        ).decode()
+        # Create signature - Blofin format: requestPath + method + timestamp + nonce + body
+        prehash_string = request_path + method + timestamp + nonce + body
+
+        # Generate HMAC-SHA256 signature
+        signature_bytes = hmac.new(
+            self.api_secret.encode(),
+            prehash_string.encode(),
+            hashlib.sha256
+        ).digest()
+
+        # Convert to hex then base64 encode
+        signature_hex = signature_bytes.hex()
+        signature = base64.b64encode(signature_hex.encode()).decode()
 
         headers = {
-            "BF-ACCESS-KEY": self.api_key,
-            "BF-ACCESS-SIGN": signature,
-            "BF-ACCESS-TIMESTAMP": timestamp,
-            "BF-ACCESS-PASSPHRASE": self.passphrase,
+            "ACCESS-KEY": self.api_key,
+            "ACCESS-SIGN": signature,
+            "ACCESS-TIMESTAMP": timestamp,
+            "ACCESS-NONCE": nonce,
+            "ACCESS-PASSPHRASE": self.passphrase,
             "Content-Type": "application/json"
         }
 
@@ -264,7 +270,7 @@ class BlofinClient(BaseExchange):
                 async with self._session.get(url, params=params, headers=headers) as response:
                     return await response.json()
             else:
-                async with self._session.post(url, data=data, headers=headers) as response:
+                async with self._session.post(url, data=body, headers=headers) as response:
                     return await response.json()
 
         except Exception as e:

@@ -69,7 +69,8 @@ class MLStrategy(IStrategy, ABC):
         Analyze market data using ML model and generate trading signals.
         """
         if not self.is_trained:
-            return self._create_hold_signal(market_data[-1] if market_data else None)
+            # Use simple price momentum fallback when model not trained
+            return self._simple_momentum_fallback(market_data)
 
         try:
             # Prepare features for prediction
@@ -442,7 +443,7 @@ class MLStrategy(IStrategy, ABC):
         return TradingSignal(
             symbol=current_data.symbol,
             action=OrderSide.BUY,  # Default action for HOLD
-            confidence=1.0,
+            confidence=0.0,
             price=current_data.close,
             amount=None,
             timestamp=datetime.now(),
@@ -452,6 +453,65 @@ class MLStrategy(IStrategy, ABC):
             strength=0.0,
             strategy_name=self.name
         )
+
+    def _simple_momentum_fallback(self, market_data: List[MarketData]) -> TradingSignal:
+        """Simple momentum-based fallback when model is not trained."""
+        self.logger.info(f"🟢 Random Forest using momentum fallback with {len(market_data)} data points...")
+        if not market_data or len(market_data) < 10:
+            return self._create_hold_signal(market_data[-1] if market_data else None)
+
+        try:
+            current_data = market_data[-1]
+
+            # Calculate short-term momentum (last 5 periods)
+            recent_prices = [float(md.close) for md in market_data[-5:]]
+            short_momentum = (recent_prices[-1] - recent_prices[0]) / recent_prices[0]
+
+            # Calculate medium-term momentum (last 10 periods)
+            medium_prices = [float(md.close) for md in market_data[-10:]]
+            medium_momentum = (medium_prices[-1] - medium_prices[0]) / medium_prices[0]
+
+            # Combine momentums
+            combined_momentum = (short_momentum * 0.6) + (medium_momentum * 0.4)
+
+            # Generate signal based on momentum (always active for testing)
+            if combined_momentum > 0:  # Any positive momentum
+                action = OrderSide.BUY
+                # Scale confidence: 0.4 base + momentum strength
+                confidence = max(0.4, min(0.8, 0.4 + abs(combined_momentum) * 80))
+                signal_type = SignalType.BUY
+            else:  # Any negative momentum
+                action = OrderSide.SELL
+                # Scale confidence: 0.4 base + momentum strength
+                confidence = max(0.4, min(0.8, 0.4 + abs(combined_momentum) * 80))
+                signal_type = SignalType.SELL
+
+            result = TradingSignal(
+                symbol=current_data.symbol,
+                action=action,
+                confidence=confidence,
+                price=current_data.close,
+                amount=None,
+                timestamp=datetime.now(),
+                metadata={
+                    "signal_type": signal_type.value,
+                    "strength": confidence,
+                    "strategy_name": self.name,
+                    "short_momentum": short_momentum,
+                    "medium_momentum": medium_momentum,
+                    "combined_momentum": combined_momentum,
+                    "fallback_mode": True,
+                    "reason": "model_not_trained_using_momentum_fallback"
+                },
+                signal_type=signal_type,
+                strength=confidence,
+                strategy_name=self.name
+            )
+            self.logger.info(f"🟢 Random Forest Agent → {action.value} {current_data.symbol} (confidence: {confidence:.2%}, momentum: {combined_momentum:+.2%})")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error in momentum fallback: {e}")
+            return self._create_hold_signal(market_data[-1] if market_data else None)
 
     def get_feature_importance(self) -> Optional[Dict[str, float]]:
         """Get feature importance if supported by the model."""

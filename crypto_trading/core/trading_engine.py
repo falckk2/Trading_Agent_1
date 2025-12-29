@@ -62,17 +62,34 @@ class TradingEngine:
             logger.warning("Trading engine is already running")
             return
 
+        logger.info("=" * 70)
+        logger.info("🚀 STARTING TRADING ENGINE")
+        logger.info("=" * 70)
+
         try:
             # Connect to exchange
+            logger.info("Connecting to exchange...")
+            logger.info(f"Exchange client type: {type(self.exchange_client).__name__}")
             connected = await self.exchange_client.connect()
             if not connected:
+                logger.error("Exchange connection returned False")
                 raise TradingSystemError("Failed to connect to exchange")
+            logger.info("✅ Connected to exchange")
 
             # Load initial data
+            logger.info("Loading account information...")
             await self.account_state_manager.update_account_info()
+            balance = self.account_state_manager.get_balance()
+            logger.info(f"✅ Account balance: {dict(balance)}")
 
             self._is_running = True
-            logger.info("Trading engine started successfully")
+            self._trading_enabled = True  # Enable trading by default when started
+
+            logger.info("=" * 70)
+            logger.info("✅ TRADING ENGINE STARTED SUCCESSFULLY")
+            logger.info(f"📊 Trading loop will run every {self.config_manager.get('trading_loop_interval', 10)} seconds")
+            logger.info("🤖 Agents will analyze market data and generate signals")
+            logger.info("=" * 70)
 
             # Start main trading loop
             await self._run_trading_loop()
@@ -134,16 +151,23 @@ class TradingEngine:
 
     async def _execute_trading_cycle(self) -> None:
         """Execute one trading cycle."""
+        logger.debug("Starting trading cycle...")
+
         # Update account information
         await self.account_state_manager.update_account_info()
 
-        # Get active agent
-        active_agent = self.agent_manager.get_active_agent()
-        if active_agent is None:
-            return
-
         # Get symbols to trade
-        symbols = self.config_manager.get("trading_symbols", ["BTC/USDT"])
+        symbols = self.config_manager.get("trading.symbols", ["BTC-USDT"])
+        logger.debug(f"Analyzing symbols: {symbols}")
+
+        # Check if multi-agent mode is enabled
+        is_multi_agent = self.agent_manager.is_multi_agent_mode()
+        if is_multi_agent:
+            active_agents = self.agent_manager.get_active_agents()
+            logger.info(f"Multi-agent mode: {len(active_agents)} agents active")
+        else:
+            active_agent = self.agent_manager.get_active_agent()
+            logger.info(f"Single agent mode: {active_agent.get_name() if active_agent else 'None'}")
 
         for symbol in symbols:
             try:
@@ -152,23 +176,82 @@ class TradingEngine:
                 if not market_data:
                     continue
 
-                # Generate trading signal
-                signal = await active_agent.analyze(market_data)
-                if signal is None:
-                    continue
+                if is_multi_agent:
+                    # Multi-agent mode: get signals from all active agents
+                    logger.debug(f"Fetching signals from all agents for {symbol}...")
+                    signals_dict = await self.agent_manager.analyze_with_all_agents(market_data)
 
-                # Publish signal event
-                await self.event_bus.publish(
-                    Event(
-                        type=EventType.SIGNAL_GENERATED,
-                        data={"signal": signal, "agent": active_agent.get_name()},
-                        timestamp=datetime.now()
+                    if not signals_dict:
+                        logger.debug(f"No signals from any active agents for {symbol}")
+                        continue
+
+                    # Process each agent's signal
+                    signals_received = 0
+                    for agent_name, signal in signals_dict.items():
+                        if signal is None:
+                            logger.debug(f"{agent_name}: No signal (HOLD/neutral)")
+                            continue
+
+                        signals_received += 1
+                        action = signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
+                        logger.info(f"📊 {agent_name} → {action} {signal.symbol} (confidence: {signal.confidence:.1%})")
+
+                        # Ensure signal has agent name
+                        signal.strategy_name = agent_name
+
+                        # Publish signal event
+                        await self.event_bus.publish(
+                            Event(
+                                type=EventType.SIGNAL_GENERATED,
+                                data={"signal": signal, "agent": agent_name},
+                                timestamp=datetime.now()
+                            )
+                        )
+
+                        # Execute signal if trading is enabled
+                        if self._trading_enabled:
+                            await self._execute_signal(signal)
+                        else:
+                            logger.warning(f"Trading disabled - signal from {agent_name} not executed")
+
+                    if signals_received == 0:
+                        logger.debug(f"All agents returned HOLD for {symbol}")
+
+                else:
+                    # Single agent mode: use active agent
+                    active_agent = self.agent_manager.get_active_agent()
+                    if active_agent is None:
+                        logger.warning("No active agent set")
+                        return
+
+                    # Generate trading signal
+                    logger.debug(f"Fetching signal from {active_agent.get_name()} for {symbol}...")
+                    signal = await active_agent.analyze(market_data)
+
+                    if signal is None:
+                        logger.debug(f"{active_agent.get_name()}: No signal (HOLD/neutral) for {symbol}")
+                        continue
+
+                    action = signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
+                    logger.info(f"📊 {active_agent.get_name()} → {action} {signal.symbol} (confidence: {signal.confidence:.1%})")
+
+                    # Ensure signal has agent name
+                    signal.strategy_name = active_agent.get_name()
+
+                    # Publish signal event
+                    await self.event_bus.publish(
+                        Event(
+                            type=EventType.SIGNAL_GENERATED,
+                            data={"signal": signal, "agent": active_agent.get_name()},
+                            timestamp=datetime.now()
+                        )
                     )
-                )
 
-                # Execute signal if trading is enabled
-                if self._trading_enabled:
-                    await self._execute_signal(signal)
+                    # Execute signal if trading is enabled
+                    if self._trading_enabled:
+                        await self._execute_signal(signal)
+                    else:
+                        logger.warning(f"Trading disabled - signal from {active_agent.get_name()} not executed")
 
             except Exception as e:
                 logger.error(f"Error processing symbol {symbol}: {e}")
@@ -180,9 +263,10 @@ class TradingEngine:
             current_data = await self.exchange_client.get_market_data(symbol)
 
             # Get historical data for analysis
-            lookback_hours = self.config_manager.get("analysis_lookback_hours", 24)
+            lookback_hours = self.config_manager.get("trading.analysis_lookback_hours", 24)
             end_time = datetime.now()
             start_time = end_time - timedelta(hours=lookback_hours)
+            logger.info(f"Fetching {lookback_hours} hours of historical data for {symbol}")
 
             historical_data = await self.exchange_client.get_historical_data(
                 symbol, "1h", start_time, end_time
@@ -191,8 +275,10 @@ class TradingEngine:
             # Combine current and historical data
             if historical_data:
                 historical_data.append(current_data)
+                logger.info(f"Retrieved {len(historical_data)} data points for {symbol}")
                 return historical_data
             else:
+                logger.warning(f"No historical data returned, using only current candle")
                 return [current_data]
 
         except Exception as e:
@@ -233,6 +319,74 @@ class TradingEngine:
 
         self.account_state_manager.clear_active_orders()
 
+    async def close_all_positions(self) -> Dict[str, Any]:
+        """
+        Close all open positions by placing market orders.
+
+        Returns:
+            Dictionary with results: {
+                'success': bool,
+                'closed_count': int,
+                'failed_count': int,
+                'details': List[str]
+            }
+        """
+        positions = self.account_state_manager.get_positions()
+
+        if not positions:
+            logger.info("No open positions to close")
+            return {
+                'success': True,
+                'closed_count': 0,
+                'failed_count': 0,
+                'details': ['No open positions']
+            }
+
+        closed_count = 0
+        failed_count = 0
+        details = []
+
+        logger.info(f"Closing {len(positions)} open positions...")
+
+        for position in positions:
+            try:
+                # Determine order side (opposite of position)
+                order_side = OrderSide.SELL if position.is_long else OrderSide.BUY
+
+                # Create market order to close position
+                close_order = Order(
+                    id="",  # Will be set by exchange
+                    symbol=position.symbol,
+                    side=order_side,
+                    type=OrderType.MARKET,
+                    amount=abs(position.amount),
+                    price=None,  # Market order
+                    status=OrderStatus.PENDING,
+                    timestamp=datetime.now()
+                )
+
+                # Place the order
+                order = await self.exchange_client.place_order(close_order)
+
+                closed_count += 1
+                details.append(f"Closed {position.symbol}: {order_side.value} {abs(position.amount)}")
+                logger.info(f"Position closed: {position.symbol} - {order_side.value} {abs(position.amount)}")
+
+            except Exception as e:
+                failed_count += 1
+                details.append(f"Failed to close {position.symbol}: {str(e)}")
+                logger.error(f"Failed to close position {position.symbol}: {e}")
+
+        result = {
+            'success': failed_count == 0,
+            'closed_count': closed_count,
+            'failed_count': failed_count,
+            'details': details
+        }
+
+        logger.info(f"Position closing complete: {closed_count} closed, {failed_count} failed")
+        return result
+
     async def _handle_order_filled(self, event: Event) -> None:
         """Handle order filled event."""
         order = event.data["order"]
@@ -259,15 +413,27 @@ class TradingEngine:
 
     def get_status(self) -> Dict[str, Any]:
         """Get current system status."""
-        active_agent = self.agent_manager.get_active_agent()
-        active_agent_name = active_agent.get_name() if active_agent else None
+        is_multi_agent = self.agent_manager.is_multi_agent_mode()
+
+        if is_multi_agent:
+            # Multi-agent mode
+            active_agents = self.agent_manager.get_active_agents()
+            active_agent_names = [agent.get_name() for agent in active_agents]
+            active_agent_name = None  # Not applicable in multi-agent mode
+        else:
+            # Single agent mode
+            active_agent = self.agent_manager.get_active_agent()
+            active_agent_name = active_agent.get_name() if active_agent else None
+            active_agent_names = [active_agent_name] if active_agent_name else []
 
         balance = self.account_state_manager.get_balance()
 
         return {
             "is_running": self._is_running,
             "trading_enabled": self._trading_enabled,
-            "active_agent": active_agent_name,
+            "multi_agent_mode": is_multi_agent,
+            "active_agent": active_agent_name,  # For backward compatibility (single mode only)
+            "active_agents": active_agent_names,  # List of active agents
             "active_orders": self.account_state_manager.get_active_order_count(),
             "positions": len(self.account_state_manager.get_positions()),
             "balance": {k: float(v) for k, v in balance.items()},

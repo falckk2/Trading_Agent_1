@@ -16,8 +16,10 @@ class AgentManager(IAgentManager):
 
     def __init__(self):
         self._agents: Dict[str, ITradingAgent] = {}
-        self._active_agent: Optional[str] = None
+        self._active_agent: Optional[str] = None  # For backward compatibility (single agent mode)
+        self._active_agents: List[str] = []  # For multi-agent mode
         self._agent_configs: Dict[str, Dict[str, Any]] = {}
+        self._multi_agent_mode: bool = False  # False = single agent, True = multiple agents
 
     def register_agent(self, agent: ITradingAgent, config: Optional[Dict[str, Any]] = None) -> None:
         """Register a new trading agent."""
@@ -137,5 +139,129 @@ class AgentManager(IAgentManager):
         return {
             "total_agents": len(self._agents),
             "active_agent": self._active_agent,
+            "active_agents": self._active_agents,
+            "multi_agent_mode": self._multi_agent_mode,
             "agents": [self.get_agent_info(name) for name in self._agents.keys()]
         }
+
+    # Multi-agent mode methods
+
+    def enable_multi_agent_mode(self) -> None:
+        """Enable multi-agent mode."""
+        self._multi_agent_mode = True
+        logger.info("Multi-agent mode enabled")
+
+    def disable_multi_agent_mode(self) -> None:
+        """Disable multi-agent mode and return to single agent mode."""
+        self._multi_agent_mode = False
+        self._active_agents = []
+        logger.info("Multi-agent mode disabled")
+
+    def set_active_agents(self, agent_names: List[str]) -> bool:
+        """
+        Set multiple active agents for multi-agent mode.
+
+        Args:
+            agent_names: List of agent names to activate
+
+        Returns:
+            True if successful
+
+        Raises:
+            AgentNotFoundError: If any agent not found
+        """
+        # Validate all agents exist
+        for name in agent_names:
+            if name not in self._agents:
+                raise AgentNotFoundError(f"Agent '{name}' not found")
+
+        self._active_agents = agent_names
+        self._multi_agent_mode = True
+
+        # For backward compatibility, set first agent as single active agent
+        if agent_names:
+            self._active_agent = agent_names[0]
+
+        logger.info(f"Active agents set to: {', '.join(agent_names)}")
+        return True
+
+    def add_active_agent(self, agent_name: str) -> bool:
+        """
+        Add an agent to the active agents list.
+
+        Args:
+            agent_name: Name of agent to add
+
+        Returns:
+            True if successful
+        """
+        if agent_name not in self._agents:
+            raise AgentNotFoundError(f"Agent '{agent_name}' not found")
+
+        if agent_name not in self._active_agents:
+            self._active_agents.append(agent_name)
+            self._multi_agent_mode = True
+            logger.info(f"Added '{agent_name}' to active agents")
+
+        return True
+
+    def remove_active_agent(self, agent_name: str) -> bool:
+        """
+        Remove an agent from the active agents list.
+
+        Args:
+            agent_name: Name of agent to remove
+
+        Returns:
+            True if successful
+        """
+        if agent_name in self._active_agents:
+            self._active_agents.remove(agent_name)
+            logger.info(f"Removed '{agent_name}' from active agents")
+
+            # If no agents left, disable multi-agent mode
+            if not self._active_agents:
+                self._multi_agent_mode = False
+
+        return True
+
+    def get_active_agents(self) -> List[ITradingAgent]:
+        """
+        Get all currently active agents.
+
+        Returns:
+            List of active agent instances
+        """
+        if not self._multi_agent_mode:
+            # Single agent mode - return single agent as list for consistency
+            agent = self.get_active_agent()
+            return [agent] if agent else []
+
+        return [self._agents[name] for name in self._active_agents if name in self._agents]
+
+    def is_multi_agent_mode(self) -> bool:
+        """Check if multi-agent mode is enabled."""
+        return self._multi_agent_mode
+
+    async def analyze_with_all_agents(self, market_data: List[MarketData]) -> Dict[str, TradingSignal]:
+        """
+        Analyze market data with all active agents.
+
+        Args:
+            market_data: Market data to analyze
+
+        Returns:
+            Dictionary mapping agent names to their signals
+        """
+        results = {}
+        active_agents = self.get_active_agents()
+
+        for agent in active_agents:
+            try:
+                signal = await agent.analyze(market_data)
+                results[agent.get_name()] = signal
+                logger.debug(f"Signal from '{agent.get_name()}': {signal.action} {signal.symbol}")
+            except Exception as e:
+                logger.error(f"Error analyzing with agent '{agent.get_name()}': {e}")
+
+        return results
