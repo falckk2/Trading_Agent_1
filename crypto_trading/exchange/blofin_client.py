@@ -265,7 +265,7 @@ class BlofinClient(BaseExchange):
             "Content-Type": "application/json"
         }
 
-        try:
+        async def make_request():
             if method == "GET":
                 async with self._session.get(url, params=params, headers=headers) as response:
                     return await response.json()
@@ -273,6 +273,11 @@ class BlofinClient(BaseExchange):
                 async with self._session.post(url, data=body, headers=headers) as response:
                     return await response.json()
 
+        try:
+            return await asyncio.wait_for(make_request(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            logger.error(f"Request timed out after {self.timeout} seconds")
+            raise ConnectionError(f"Request timed out after {self.timeout} seconds")
         except Exception as e:
             logger.error(f"Request failed: {e}")
             raise ConnectionError(f"Request failed: {e}")

@@ -236,7 +236,7 @@ class BaseExchange(IExchangeClient):
         if order.amount <= 0:
             raise OrderException("Order quantity must be positive")
 
-        if order.order_type == OrderType.LIMIT and (not order.price or order.price <= 0):
+        if order.type == OrderType.LIMIT and (not order.price or order.price <= 0):
             raise OrderException("Limit orders require a positive price")
 
         if not order.symbol:

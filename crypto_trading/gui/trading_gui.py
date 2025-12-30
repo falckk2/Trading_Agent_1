@@ -40,6 +40,11 @@ class TradingGUI:
         self.signal_count = 0
         self.order_count = 0
 
+        # Market indicators
+        self.current_rsi = None
+        self.rsi_oversold_threshold = 45
+        self.rsi_overbought_threshold = 55
+
         # Agent tracking - maps agent names to their orders and signals
         self.agent_orders = {}  # agent_name -> list of order_ids
         self.agent_signals = {}  # agent_name -> last signal info
@@ -128,6 +133,14 @@ class TradingGUI:
             symbol = signal.symbol
             confidence = signal.confidence * 100
 
+            # Extract RSI value from metadata if available
+            if hasattr(signal, 'metadata') and signal.metadata:
+                rsi_current = signal.metadata.get('rsi_current')
+                if rsi_current is not None:
+                    self.current_rsi = rsi_current
+                    self.rsi_oversold_threshold = signal.metadata.get('oversold_threshold', 45)
+                    self.rsi_overbought_threshold = signal.metadata.get('overbought_threshold', 55)
+
             # Track agent signal
             self.agent_signals[agent] = {
                 'action': action,
@@ -143,6 +156,7 @@ class TradingGUI:
                 self.root.after(0, lambda: self._log_message(message, "signal"))
                 self.root.after(0, lambda: self.signal_counter_label.config(text=str(self.signal_count)))
                 self.root.after(0, lambda: self._update_agent_status_display())
+                self.root.after(0, lambda: self._update_rsi_display())
 
             logger.info(f"Signal: {agent} {action} {symbol} confidence={confidence:.1f}%")
         except Exception as e:
@@ -346,6 +360,27 @@ class TradingGUI:
             font=("Arial", 10, "bold")
         )
         self.trading_status_indicator.pack(side=tk.LEFT)
+
+        # RSI Indicator
+        rsi_status_frame = tk.Frame(status_indicator_frame, bg="#2b2b2b")
+        rsi_status_frame.pack(side=tk.LEFT, padx=10)
+
+        tk.Label(
+            rsi_status_frame,
+            text="RSI:",
+            bg="#2b2b2b",
+            fg="#ffffff",
+            font=("Arial", 10, "bold")
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        self.rsi_indicator = tk.Label(
+            rsi_status_frame,
+            text="--",
+            bg="#2b2b2b",
+            fg="#FFFFFF",
+            font=("Arial", 10, "bold")
+        )
+        self.rsi_indicator.pack(side=tk.LEFT)
 
         # Control panel
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
@@ -660,7 +695,34 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
 
         except Exception as e:
             logger.error(f"Error updating status: {e}")
-            messagebox.showerror("Error", f"Failed to update status: {e}")
+
+    def _update_rsi_display(self):
+        """Update RSI indicator display."""
+        try:
+            if self.current_rsi is None:
+                self.rsi_indicator.config(text="--", fg="#888888")
+                return
+
+            rsi_value = self.current_rsi
+            rsi_text = f"{rsi_value:.1f}"
+
+            # Color code based on RSI levels
+            if rsi_value <= self.rsi_oversold_threshold:
+                # Oversold - Green (potential buy)
+                color = "#00FF00"
+                rsi_text += " ↓"
+            elif rsi_value >= self.rsi_overbought_threshold:
+                # Overbought - Red (potential sell)
+                color = "#FF4444"
+                rsi_text += " ↑"
+            else:
+                # Neutral zone - White/Gray
+                color = "#FFFFFF"
+
+            self.rsi_indicator.config(text=rsi_text, fg=color)
+
+        except Exception as e:
+            logger.error(f"Error updating RSI display: {e}")
 
     def _update_positions_display(self):
         """Update the positions display with current open positions."""

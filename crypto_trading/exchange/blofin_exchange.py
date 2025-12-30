@@ -54,7 +54,6 @@ class BlofinExchange(BaseExchange):
     async def _initialize_connection(self) -> None:
         """Initialize HTTP session and connection."""
         self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
             headers={'Content-Type': 'application/json'}
         )
 
@@ -83,7 +82,7 @@ class BlofinExchange(BaseExchange):
             "instId": order.symbol,
             "tdMode": "cash",  # Cash trading mode
             "side": order.side.value,
-            "ordType": self._convert_order_type(order.order_type),
+            "ordType": self._convert_order_type(order.type),
             "sz": str(order.amount)
         }
 
@@ -247,7 +246,7 @@ class BlofinExchange(BaseExchange):
 
         url = self.base_url + endpoint
 
-        try:
+        async def make_request():
             if method.upper() == "GET":
                 async with self.session.get(url, params=params, headers=headers) as response:
                     return await response.json()
@@ -256,6 +255,11 @@ class BlofinExchange(BaseExchange):
                     method.upper(), url, json=data, headers=headers
                 ) as response:
                     return await response.json()
+
+        try:
+            return await asyncio.wait_for(make_request(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            raise ExchangeAPIError(f"API request timed out after {self.timeout} seconds")
         except Exception as e:
             raise ExchangeAPIError(f"API request failed: {e}")
 
@@ -271,9 +275,14 @@ class BlofinExchange(BaseExchange):
 
         url = self.base_url + endpoint
 
-        try:
+        async def make_request():
             async with self.session.get(url, params=params) as response:
                 return await response.json()
+
+        try:
+            return await asyncio.wait_for(make_request(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            raise ExchangeAPIError(f"Public API request timed out after {self.timeout} seconds")
         except Exception as e:
             raise ExchangeAPIError(f"Public API request failed: {e}")
 
