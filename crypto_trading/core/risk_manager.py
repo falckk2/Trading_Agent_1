@@ -59,45 +59,48 @@ class RiskManager(IRiskManager):
     def validate_order(self, order: Order, positions: List[Position]) -> bool:
         """Validate if an order meets risk criteria."""
         try:
+            logger.info(f"Validating order: {order.symbol} {order.side.value} {order.amount} @ ${order.price if order.price else 'MARKET'}")
+
             # Basic validation
             if not self._validate_order_basics(order):
+                logger.warning("❌ VALIDATION FAILED: Order basics check")
                 return False
 
             # Check daily loss limits
             if not self._check_daily_loss_limit():
-                logger.warning("Order rejected: Daily loss limit exceeded")
+                logger.warning("❌ VALIDATION FAILED: Daily loss limit exceeded")
                 return False
 
             # Check position limits
             if not self._check_position_limits(order, positions):
-                logger.warning("Order rejected: Position limits exceeded")
+                logger.warning(f"❌ VALIDATION FAILED: Position limits exceeded (current positions: {len(positions)})")
                 return False
 
             # Check exposure limits
             if not self._check_exposure_limits(order, positions):
-                logger.warning("Order rejected: Exposure limits exceeded")
+                logger.warning("❌ VALIDATION FAILED: Exposure limits exceeded")
                 return False
 
             # Check order size limits
             if not self._check_order_size_limits(order):
-                logger.warning("Order rejected: Order size limits exceeded")
+                logger.warning("❌ VALIDATION FAILED: Order size limits")
                 return False
 
-            logger.debug(f"Order validation passed for {order.symbol}")
+            logger.info(f"✅ Order validation PASSED for {order.symbol}")
             return True
 
         except Exception as e:
-            logger.error(f"Error validating order: {e}")
+            logger.error(f"❌ Error validating order: {e}", exc_info=True)
             return False
 
     def _validate_order_basics(self, order: Order) -> bool:
         """Basic order validation."""
         if order.amount <= 0:
-            logger.warning("Order rejected: Invalid amount")
+            logger.warning(f"Order rejected: Invalid amount ({order.amount})")
             return False
 
         if order.price is not None and order.price <= 0:
-            logger.warning("Order rejected: Invalid price")
+            logger.warning(f"Order rejected: Invalid price ({order.price})")
             return False
 
         if not order.symbol:
@@ -155,6 +158,16 @@ class RiskManager(IRiskManager):
 
         max_exposure = portfolio_value * max_exposure_pct
 
+        # Log detailed rejection reason
+        if new_exposure > max_exposure:
+            logger.warning(
+                f"Exposure limit exceeded: "
+                f"Current=${float(current_exposure):.2f}, "
+                f"Order=${float(order_value):.2f}, "
+                f"New Total=${float(new_exposure):.2f}, "
+                f"Max Allowed=${float(max_exposure):.2f} ({float(max_exposure_pct)*100:.0f}% of ${float(portfolio_value):,.0f})"
+            )
+
         return new_exposure <= max_exposure
 
     def _check_order_size_limits(self, order: Order) -> bool:
@@ -167,7 +180,16 @@ class RiskManager(IRiskManager):
         order_value = order.amount * order_price
 
         # Check both minimum value and minimum amount
-        return order_value >= min_order_size and order.amount >= min_order_amount
+        size_check_passed = order_value >= min_order_size and order.amount >= min_order_amount
+
+        if not size_check_passed:
+            logger.warning(
+                f"Order size check failed: "
+                f"Order value=${float(order_value):.2f} (min=${float(min_order_size):.2f}), "
+                f"Order amount={float(order.amount):.6f} (min={float(min_order_amount):.6f})"
+            )
+
+        return size_check_passed
 
     def calculate_position_size(
         self,

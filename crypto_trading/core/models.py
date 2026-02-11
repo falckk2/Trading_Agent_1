@@ -98,6 +98,7 @@ class Order:
     average_price: Optional[Decimal] = None
     stop_price: Optional[Decimal] = None
     fees: Decimal = Decimal('0')
+    reduce_only: bool = False  # If True, order can only reduce position size (for closing positions)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):

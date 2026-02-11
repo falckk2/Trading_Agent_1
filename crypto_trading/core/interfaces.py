@@ -245,6 +245,7 @@ class INotificationService(ABC):
 
 
 class EventType(Enum):
+    ORDER_PLACED = "order_placed"
     ORDER_FILLED = "order_filled"
     ORDER_CANCELLED = "order_cancelled"
     SIGNAL_GENERATED = "signal_generated"

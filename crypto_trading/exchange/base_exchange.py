@@ -89,7 +89,7 @@ class BaseExchange(IExchangeClient):
 
         try:
             order_id = await self._place_order_impl(order)
-            order.order_id = order_id
+            order.id = order_id  # Fixed: Order class uses 'id' not 'order_id'
             order.status = OrderStatus.OPEN
             order.timestamp = datetime.now()
             self.logger.info(f"Order placed: {order_id}")
@@ -115,7 +115,8 @@ class BaseExchange(IExchangeClient):
         try:
             return await self._get_order_status_impl(order_id)
         except Exception as e:
-            self.logger.error(f"Failed to get order status for {order_id}: {e}")
+            # Order status checks often fail for recently placed orders - use debug level
+            self.logger.debug(f"Could not get order status for {order_id}: {e}")
             raise ExchangeAPIError(f"Order status retrieval failed: {e}")
 
     async def get_market_data(self, symbol: str) -> MarketData:

@@ -33,10 +33,14 @@ class AccountStateManager:
         self._active_orders: Dict[str, Order] = {}
         self._balance: Dict[str, Decimal] = {}
 
-    async def update_account_info(self) -> None:
+    async def update_account_info(self, update_order_statuses: bool = False) -> None:
         """
         Update all account information.
-        Fetches balance, positions, and order statuses.
+        Fetches balance, positions, and optionally order statuses.
+
+        Args:
+            update_order_statuses: If True, fetch status of all active orders (expensive).
+                                   Defaults to False to reduce API load.
         """
         try:
             # Update balance
@@ -45,8 +49,10 @@ class AccountStateManager:
             # Update positions
             self._positions = await self.account_data_provider.get_positions()
 
-            # Update active orders status
-            await self._update_order_statuses()
+            # Update active orders status (disabled by default - unreliable and expensive)
+            # We rely on ORDER_FILLED events from exchange webhooks/websockets instead
+            if update_order_statuses:
+                await self._update_order_statuses()
 
         except Exception as e:
             logger.error(f"Failed to update account info: {e}")
@@ -56,7 +62,14 @@ class AccountStateManager:
         """Update status of all active orders."""
         orders_to_remove = []
 
-        for order_id, order in self._active_orders.items():
+        # Create a snapshot of order IDs to avoid "dictionary changed size during iteration"
+        order_ids_to_check = list(self._active_orders.keys())
+
+        for order_id in order_ids_to_check:
+            # Check if order still exists (might have been removed by another thread)
+            if order_id not in self._active_orders:
+                continue
+
             try:
                 updated_order = await self.account_data_provider.get_order_status(order_id)
                 self._active_orders[order_id] = updated_order
@@ -83,11 +96,14 @@ class AccountStateManager:
                         )
 
             except Exception as e:
-                logger.error(f"Failed to update order status for {order_id}: {e}")
+                # Order status checks are non-critical - just log and continue
+                logger.debug(f"Could not update order status for {order_id}: {e}")
+                # Don't spam the logs - this happens frequently for recently placed orders
 
-        # Remove completed orders
+        # Remove completed orders (safe now since we're not iterating)
         for order_id in orders_to_remove:
-            del self._active_orders[order_id]
+            if order_id in self._active_orders:
+                del self._active_orders[order_id]
 
     def add_active_order(self, order: Order) -> None:
         """Add an order to the active orders list."""

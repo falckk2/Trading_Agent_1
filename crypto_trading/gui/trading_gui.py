@@ -34,7 +34,11 @@ class TradingGUI:
         # GUI state
         self.is_running = False
         self.update_interval = 1000  # ms
-        self.positions_update_interval = 2000  # ms - update positions every 2 seconds
+        self.positions_update_interval = 5000  # ms - update positions every 5 seconds (reduced from 2s to prevent API overload)
+
+        # Trading engine event loop (set when engine starts)
+        self.engine_loop = None
+        self.engine_thread = None
 
         # Trading activity tracking
         self.signal_count = 0
@@ -110,6 +114,7 @@ class TradingGUI:
             self.event_bus.subscribe(EventType.SIGNAL_GENERATED, self._on_signal_generated)
 
             # Subscribe to order events
+            self.event_bus.subscribe(EventType.ORDER_PLACED, self._on_order_placed)
             self.event_bus.subscribe(EventType.ORDER_FILLED, self._on_order_filled)
             self.event_bus.subscribe(EventType.ORDER_CANCELLED, self._on_order_cancelled)
 
@@ -162,8 +167,8 @@ class TradingGUI:
         except Exception as e:
             logger.error(f"Error handling signal event: {e}")
 
-    async def _on_order_filled(self, event: Event):
-        """Handle order filled event."""
+    async def _on_order_placed(self, event: Event):
+        """Handle order placed event."""
         try:
             order = event.data.get('order')
             self.order_count += 1
@@ -171,8 +176,8 @@ class TradingGUI:
             if order:
                 action = order.side.value.upper() if hasattr(order.side, 'value') else str(order.side).upper()
                 symbol = order.symbol
-                amount = order.filled_amount if hasattr(order, 'filled_amount') else order.amount
-                price = order.average_price if hasattr(order, 'average_price') and order.average_price else order.price
+                amount = order.amount
+                price = order.price if order.price else "MARKET"
 
                 # Track order to agent mapping
                 agent_name = order.metadata.get('agent_name', 'Unknown') if hasattr(order, 'metadata') and order.metadata else 'Unknown'
@@ -182,14 +187,40 @@ class TradingGUI:
                         self.agent_orders[agent_name] = []
                     self.agent_orders[agent_name].append(order.id)
 
-                message = f"✅ ORDER #{self.order_count}: {action} {amount} {symbol} @ ${price}"
+                message = f"✅ ORDER #{self.order_count} PLACED: {action} {amount} {symbol} @ ${price}"
             else:
-                message = f"✅ ORDER #{self.order_count}: Order filled"
+                message = f"✅ ORDER #{self.order_count} PLACED"
 
             # Update GUI on main thread
             if self.root:
                 self.root.after(0, lambda: self._log_message(message, "order"))
                 self.root.after(0, lambda: self.order_counter_label.config(text=str(self.order_count)))
+                # Update agent status display
+                self.root.after(0, lambda: self._update_agent_status_display())
+
+            logger.info(f"Order placed: {message}")
+        except Exception as e:
+            logger.error(f"Error handling order placed event: {e}")
+
+    async def _on_order_filled(self, event: Event):
+        """Handle order filled event."""
+        try:
+            order = event.data.get('order')
+            # Don't increment counter - already done in _on_order_placed
+
+            if order:
+                action = order.side.value.upper() if hasattr(order.side, 'value') else str(order.side).upper()
+                symbol = order.symbol
+                amount = order.filled_amount if hasattr(order, 'filled_amount') else order.amount
+                price = order.average_price if hasattr(order, 'average_price') and order.average_price else order.price
+
+                message = f"✅ ORDER FILLED: {action} {amount} {symbol} @ ${price}"
+            else:
+                message = f"✅ ORDER FILLED"
+
+            # Update GUI on main thread
+            if self.root:
+                self.root.after(0, lambda: self._log_message(message, "order"))
                 # Update positions display since a new order was filled
                 self.root.after(0, lambda: self._update_positions_display())
                 # Update agent status display
@@ -733,6 +764,8 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
                 self.positions_text.insert(1.0, "Trading engine not initialized")
                 return
 
+            # Use cached data - trading engine updates this automatically
+            # No need to fetch fresh data every GUI update (causes API overload)
             positions = self.trading_engine.get_positions()
 
             # Clear existing display
@@ -838,17 +871,30 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
 
             # Map positions to agents based on order tracking
             for position in positions:
-                # Try to find which agent created this position
-                # Since positions don't have agent info, we'll use order tracking
+                # Try to find which agent created this position by checking order history
                 found_agent = None
-                for order_id, agent_name in self.order_to_agent.items():
-                    # Match position symbol with order
-                    for order in active_orders:
-                        if order.id == order_id and order.symbol == position.symbol:
+
+                # First check if position symbol matches any agent's recent signals
+                for agent_name in self.agent_signals:
+                    signal_info = self.agent_signals[agent_name]
+                    if signal_info.get('symbol') == position.symbol:
+                        # Match position side with signal action
+                        signal_action = signal_info.get('action', '').upper()
+                        if (position.side.value == 'buy' and signal_action == 'BUY') or \
+                           (position.side.value == 'sell' and signal_action == 'SELL'):
                             found_agent = agent_name
                             break
-                    if found_agent:
-                        break
+
+                # Fallback: check order_to_agent mapping
+                if not found_agent:
+                    for order_id, agent_name in self.order_to_agent.items():
+                        # Just check if symbol matches (order might be filled now)
+                        for order in active_orders:
+                            if order.id == order_id and order.symbol == position.symbol:
+                                found_agent = agent_name
+                                break
+                        if found_agent:
+                            break
 
                 if found_agent:
                     if found_agent not in agent_positions:
@@ -994,21 +1040,38 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
                     self._log_message("🚀 Starting trading engine...", "signal")
                     # Start the trading engine in a background task
                     import asyncio
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                    # Run trading engine start in background thread
-                    def start_engine():
-                        loop.run_until_complete(self.trading_engine.start())
-
                     import threading
-                    engine_thread = threading.Thread(target=start_engine, daemon=True)
-                    engine_thread.start()
+
+                    def start_engine():
+                        # Create event loop for this thread
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        self.engine_loop = loop  # Store reference to the loop
+                        try:
+                            loop.run_until_complete(self.trading_engine.start())
+                        finally:
+                            loop.close()
+                            self.engine_loop = None
+
+                    self.engine_thread = threading.Thread(target=start_engine, daemon=True)
+                    self.engine_thread.start()
 
                     self._log_message("✅ Trading engine started - monitoring market", "signal")
 
                     # Schedule status indicator update after engine starts (give it time to connect)
                     self.root.after(2000, self._update_status_indicators)
+                elif self.trading_engine and self.trading_engine._is_running:
+                    # Engine already running (resuming after pause)
+                    self._log_message("▶️  Resuming trading...", "signal")
+                    if self.engine_loop and self.engine_loop.is_running():
+                        import asyncio
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.trading_engine.enable_trading(),
+                            self.engine_loop
+                        )
+                        future.result(timeout=5)  # Wait up to 5 seconds
+                        logger.info("Trading enabled in engine")
+                    self._log_message("✅ Trading resumed", "signal")
                 else:
                     self._log_message("✅ Trading enabled", "signal")
 
@@ -1023,6 +1086,17 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
         try:
             self.config_manager.set("trading.enabled", False)
             self.config_manager.save()
+
+            # Actually disable trading in the engine
+            if self.trading_engine and self.engine_loop and self.engine_loop.is_running():
+                import asyncio
+                future = asyncio.run_coroutine_threadsafe(
+                    self.trading_engine.disable_trading(),
+                    self.engine_loop
+                )
+                future.result(timeout=5)  # Wait up to 5 seconds
+                logger.info("Trading disabled in engine")
+
             self._log_message("⏸️  Trading paused (positions and orders still active)", "signal")
             self._update_status()
             self._update_status_indicators()
@@ -1032,7 +1106,7 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
                 "✅ No new trades will be placed\n"
                 "⚠️  Open positions remain active\n"
                 "⚠️  Pending orders remain active\n\n"
-                "Use 'Stop Trading' for full shutdown."
+                "Click 'Start Trading' to resume or 'Stop Trading' for full shutdown."
             )
         except Exception as e:
             logger.error(f"Error pausing trading: {e}")
@@ -1063,24 +1137,19 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
             self.config_manager.save()
             self._log_message("🛑 Stopping trading...", "signal")
 
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            # Cancel all pending orders
-            self._log_message("Cancelling pending orders...", "signal")
-            try:
-                loop.run_until_complete(self.trading_engine._cancel_all_orders())
-                self._log_message("✅ All pending orders cancelled", "order")
-            except Exception as e:
-                logger.error(f"Error cancelling orders: {e}")
-                self._log_message(f"⚠️  Error cancelling orders: {e}", "error")
-
-            # Close positions if user selected YES
+            # Close positions FIRST if user selected YES (before stopping engine)
             if response:  # YES - close positions
                 self._log_message("Closing all positions...", "signal")
                 try:
-                    result = loop.run_until_complete(self.trading_engine.close_all_positions())
+                    if self.engine_loop and self.engine_loop.is_running():
+                        import asyncio
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.trading_engine.close_all_positions(),
+                            self.engine_loop
+                        )
+                        result = future.result(timeout=60)  # Wait up to 60 seconds
+                    else:
+                        raise Exception("Engine not running")
 
                     if result['closed_count'] > 0:
                         self._log_message(f"✅ Closed {result['closed_count']} positions", "order")
@@ -1094,15 +1163,38 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
                         for detail in failed_details:
                             self._log_message(f"  {detail}", "error")
 
-                except Exception as e:
-                    logger.error(f"Error closing positions: {e}")
-                    self._log_message(f"❌ Error closing positions: {e}", "error")
+                    # Force immediate position refresh after closing
+                    self.root.after(1000, self._update_positions_display)
 
-            loop.close()
+                except Exception as e:
+                    error_msg = str(e) if str(e) else type(e).__name__
+                    logger.error(f"Error closing positions: {error_msg}", exc_info=True)
+                    self._log_message(f"❌ Error closing positions: {error_msg}", "error")
+
+            # Now stop the trading engine (cancels orders and disconnects)
+            self._log_message("Stopping trading engine...", "signal")
+            if self.trading_engine and self.trading_engine._is_running:
+                try:
+                    if self.engine_loop and self.engine_loop.is_running():
+                        import asyncio
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.trading_engine.stop(),
+                            self.engine_loop
+                        )
+                        future.result(timeout=45)  # Increased to 45 seconds
+                        self._log_message("✅ Trading engine stopped", "signal")
+                    else:
+                        logger.warning("Engine loop not running")
+                except Exception as e:
+                    error_msg = str(e) if str(e) else type(e).__name__
+                    logger.error(f"Error stopping engine: {error_msg}", exc_info=True)
+                    self._log_message(f"⚠️  Error stopping engine: {error_msg}", "error")
 
             # Final message
             self._log_message("🛑 Trading stopped", "signal")
             self._update_status()
+            # Force another position refresh to clear the display
+            self.root.after(2000, self._update_positions_display)
 
             if response:
                 messagebox.showinfo(
@@ -1141,12 +1233,16 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
 
             self._log_message("Closing all positions...", "signal")
 
-            # Run async operation
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(self.trading_engine.close_all_positions())
-            loop.close()
+            # Run async operation using engine's event loop
+            if self.engine_loop and self.engine_loop.is_running():
+                import asyncio
+                future = asyncio.run_coroutine_threadsafe(
+                    self.trading_engine.close_all_positions(),
+                    self.engine_loop
+                )
+                result = future.result(timeout=30)
+            else:
+                raise Exception("Trading engine not running")
 
             # Display results
             if result['success']:
@@ -1164,8 +1260,9 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
 
                 messagebox.showwarning("Partial Success", message + "\n\nCheck logs for details.")
 
-            # Update status
+            # Update status and force position refresh
             self._update_status()
+            self.root.after(1000, self._update_positions_display)
 
         except Exception as e:
             logger.error(f"Error closing positions: {e}")
@@ -1327,11 +1424,15 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
                 if close_positions_response:  # Yes - close positions first
                     self._log_message(f"Closing positions before switching agents...", "signal")
                     try:
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        result = loop.run_until_complete(self.trading_engine.close_all_positions())
-                        loop.close()
+                        if self.engine_loop and self.engine_loop.is_running():
+                            import asyncio
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.trading_engine.close_all_positions(),
+                                self.engine_loop
+                            )
+                            result = future.result(timeout=30)
+                        else:
+                            raise Exception("Engine not running")
 
                         # Display results
                         if result['closed_count'] > 0:
@@ -1459,15 +1560,18 @@ Trading Agents ({len(available_agents)} registered) - {agent_mode_text}:
             # Stop trading engine (cancels pending orders, disconnects from exchange)
             if self.trading_engine:
                 self._log_message("Cancelling pending orders...")
-                import asyncio
                 try:
-                    # Run async stop in a new event loop
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self.trading_engine.stop())
-                    loop.close()
-                    self._log_message("✅ Pending orders cancelled")
-                    self._log_message("✅ Disconnected from exchange")
+                    if self.engine_loop and self.engine_loop.is_running():
+                        import asyncio
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.trading_engine.stop(),
+                            self.engine_loop
+                        )
+                        future.result(timeout=10)
+                        self._log_message("✅ Pending orders cancelled")
+                        self._log_message("✅ Disconnected from exchange")
+                    else:
+                        self._log_message("⚠️  Engine already stopped", "info")
                 except Exception as e:
                     logger.error(f"Error stopping trading engine: {e}")
                     self._log_message(f"⚠️  Warning: {e}", "error")

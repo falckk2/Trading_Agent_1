@@ -104,14 +104,34 @@ class TradingEngine:
         if not self._is_running:
             return
 
+        logger.info("Stopping trading engine...")
+
+        # Set flags to stop the trading loop
         self._is_running = False
         self._trading_enabled = False
 
-        # Cancel all active orders
-        await self._cancel_all_orders()
+        # Give the trading loop time to finish current cycle and exit
+        # Wait up to 5 seconds (loop now exits within 1 second)
+        for i in range(5):
+            await asyncio.sleep(1)
 
-        # Disconnect from exchange
-        await self.exchange_client.disconnect()
+        # Cancel orders with timeout to prevent hanging
+        try:
+            logger.info("Cancelling pending orders...")
+            await asyncio.wait_for(self._cancel_all_orders(), timeout=20.0)
+        except asyncio.TimeoutError:
+            logger.warning("Order cancellation timed out after 20 seconds")
+        except Exception as e:
+            logger.warning(f"Error cancelling orders during shutdown: {e}")
+
+        # ALWAYS disconnect from exchange (even if cancel failed)
+        try:
+            logger.info("Disconnecting from exchange...")
+            await asyncio.wait_for(self.exchange_client.disconnect(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Exchange disconnect timed out after 10 seconds")
+        except Exception as e:
+            logger.warning(f"Error disconnecting during shutdown: {e}")
 
         logger.info("Trading engine stopped")
 
@@ -134,10 +154,18 @@ class TradingEngine:
 
         while self._is_running:
             try:
+                # Check again before executing cycle (user might have stopped during sleep)
+                if not self._is_running:
+                    break
+
                 if self._trading_enabled:
                     await self._execute_trading_cycle()
 
-                await asyncio.sleep(loop_interval)
+                # Sleep in small chunks to check _is_running flag more frequently
+                for _ in range(loop_interval):
+                    if not self._is_running:
+                        break
+                    await asyncio.sleep(1)
 
             except Exception as e:
                 logger.error(f"Error in trading loop: {e}")
@@ -148,6 +176,8 @@ class TradingEngine:
                         timestamp=datetime.now()
                     )
                 )
+
+        logger.info("Trading loop exited cleanly")
 
     async def _execute_trading_cycle(self) -> None:
         """Execute one trading cycle."""
@@ -303,21 +333,94 @@ class TradingEngine:
             # Track the order
             self.account_state_manager.add_active_order(placed_order)
 
+            # Publish ORDER_PLACED event so GUI can update immediately
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.ORDER_PLACED,
+                    data={"order": placed_order},
+                    timestamp=datetime.now()
+                )
+            )
+
+            # Skip immediate status check - the API endpoint seems unreliable for newly placed orders
+            # Orders will be checked in the periodic update cycle instead
+            # This prevents spamming error logs for orders that haven't propagated yet
+
         except TradingSystemError as e:
             logger.warning(f"Signal execution skipped: {e}")
+            # Publish error event so GUI can display it
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.ERROR_OCCURRED,
+                    data={
+                        "error": str(e),
+                        "source": "order_execution",
+                        "signal": signal.symbol,
+                        "action": signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
+                    },
+                    timestamp=datetime.now()
+                )
+            )
         except Exception as e:
             logger.error(f"Failed to execute signal: {e}")
+            # Publish error event
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.ERROR_OCCURRED,
+                    data={
+                        "error": str(e),
+                        "source": "order_execution"
+                    },
+                    timestamp=datetime.now()
+                )
+            )
             raise
 
     async def _cancel_all_orders(self) -> None:
         """Cancel all active orders."""
-        for order_id in self.account_state_manager.get_active_orders():
-            try:
-                await self.exchange_client.cancel_order(order_id.id)
-            except Exception as e:
-                logger.error(f"Failed to cancel order {order_id.id}: {e}")
+        try:
+            # Get all pending orders from the exchange to ensure we cancel everything
+            logger.info("Fetching pending orders from exchange...")
+            pending_orders = await asyncio.wait_for(
+                self.exchange_client.get_pending_orders(),
+                timeout=10.0
+            )
 
-        self.account_state_manager.clear_active_orders()
+            if not pending_orders:
+                logger.info("No pending orders to cancel")
+                self.account_state_manager.clear_active_orders()
+                return
+
+            logger.info(f"Found {len(pending_orders)} pending orders to cancel")
+
+            # Extract order IDs
+            order_ids = [order.id for order in pending_orders]
+
+            # Use batch cancellation for efficiency
+            logger.info(f"Cancelling {len(order_ids)} orders in batch...")
+            results = await asyncio.wait_for(
+                self.exchange_client.cancel_batch_orders(order_ids),
+                timeout=10.0
+            )
+
+            # Log results
+            successful = sum(1 for success in results.values() if success)
+            failed = len(results) - successful
+
+            logger.info(f"Order cancellation complete: {successful} cancelled, {failed} failed")
+
+            if failed > 0:
+                failed_orders = [order_id for order_id, success in results.items() if not success]
+                logger.warning(f"Failed to cancel orders: {failed_orders}")
+
+        except asyncio.TimeoutError:
+            logger.warning("Order cancellation API calls timed out")
+            # Clear local tracking anyway
+            self.account_state_manager.clear_active_orders()
+        except Exception as e:
+            logger.warning(f"Error during order cancellation: {e}")
+            # Clear local tracking anyway
+            self.account_state_manager.clear_active_orders()
 
     async def close_all_positions(self) -> Dict[str, Any]:
         """
@@ -353,38 +456,79 @@ class TradingEngine:
                 # Determine order side (opposite of position)
                 order_side = OrderSide.SELL if position.is_long else OrderSide.BUY
 
-                # Create market order to close position
+                # Use position amount directly (in BTC)
+                # The exchange client will handle BTC->contracts conversion and precision rounding
+                position_amount_btc = abs(position.amount)
+                logger.debug(f"Closing position: {position.symbol} {position_amount_btc} BTC")
+
+                # Create MARKET order to close position immediately
+                # IMPORTANT: Set reduce_only=True to ensure we only close positions, not open new ones
                 close_order = Order(
                     id="",  # Will be set by exchange
                     symbol=position.symbol,
                     side=order_side,
-                    type=OrderType.MARKET,
-                    amount=abs(position.amount),
-                    price=None,  # Market order
+                    type=OrderType.MARKET,  # Use market order for immediate fill
+                    amount=position_amount_btc,  # Amount in BTC, will be converted to contracts by exchange client
+                    price=None,  # No price for market orders
                     status=OrderStatus.PENDING,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
+                    reduce_only=True  # Only reduces position, won't open new position if size exceeds
                 )
 
                 # Place the order
                 order = await self.exchange_client.place_order(close_order)
 
-                closed_count += 1
-                details.append(f"Closed {position.symbol}: {order_side.value} {abs(position.amount)}")
-                logger.info(f"Position closed: {position.symbol} - {order_side.value} {abs(position.amount)}")
+                # Log order placement
+                logger.info(f"Close order placed: {order.id} - {position.symbol} {order_side.value} {position_amount_btc} BTC (MARKET)")
+
+                # Wait briefly and check if filled (best effort)
+                await asyncio.sleep(0.5)
+                try:
+                    updated_order = await self.exchange_client.get_order_status(order.id)
+                    if updated_order.status == OrderStatus.FILLED:
+                        closed_count += 1
+                        details.append(f"✅ Closed {position.symbol}: {order_side.value} {position_amount_btc} BTC")
+                        logger.info(f"✅ Position closed (filled): {position.symbol} - {order_side.value} {position_amount_btc} BTC")
+                    else:
+                        # Order placed but not filled yet
+                        details.append(f"⏳ Close order placed for {position.symbol}: {order_side.value} {position_amount_btc} BTC (status: {updated_order.status.value})")
+                        logger.warning(f"Close order placed but not filled yet: {order.id} - status: {updated_order.status.value}")
+                except Exception as status_error:
+                    # Could not verify status - assume pending
+                    details.append(f"⏳ Close order placed for {position.symbol} (order {order.id})")
+                    logger.debug(f"Could not verify order status: {status_error}")
 
             except Exception as e:
                 failed_count += 1
-                details.append(f"Failed to close {position.symbol}: {str(e)}")
+                details.append(f"❌ Failed to close {position.symbol}: {str(e)}")
                 logger.error(f"Failed to close position {position.symbol}: {e}")
+
+        # Calculate pending orders (total - closed - failed)
+        pending_count = len(positions) - closed_count - failed_count
 
         result = {
             'success': failed_count == 0,
             'closed_count': closed_count,
             'failed_count': failed_count,
+            'pending_count': pending_count,
             'details': details
         }
 
-        logger.info(f"Position closing complete: {closed_count} closed, {failed_count} failed")
+        # Log comprehensive summary
+        if pending_count > 0:
+            logger.info(f"Position closing complete: {closed_count} filled, {pending_count} pending, {failed_count} failed")
+            logger.warning(f"⚠️  {pending_count} close order(s) placed but not filled yet - check Blofin exchange for order status")
+            logger.warning("Pending orders may fill in the next few seconds/minutes. Check the 'details' for order IDs.")
+        else:
+            logger.info(f"Position closing complete: {closed_count} closed, {failed_count} failed")
+
+        # Force account state refresh to update positions immediately
+        try:
+            await self.account_state_manager.update_account_info()
+            logger.debug("Account state refreshed after closing positions")
+        except Exception as e:
+            logger.warning(f"Failed to refresh account state after closing positions: {e}")
+
         return result
 
     async def _handle_order_filled(self, event: Event) -> None:

@@ -5,6 +5,7 @@ Uses Bollinger Bands for mean reversion and volatility-based signals.
 
 import pandas as pd
 from typing import Dict, List, Optional, Any
+from loguru import logger
 
 from ...core.models import MarketData, TradingSignal, SignalType
 from ..base_agent import BaseAgent as BaseTradingAgent
@@ -276,42 +277,52 @@ class BollingerBandsAgent(BaseTradingAgent):
     Uses Bollinger Bands strategy for volatility-based signal generation.
     """
 
-    def __init__(self, strategy=None, exchange=None, risk_manager=None,
-                 portfolio_manager=None, agent_config=None):
-        # Create Bollinger Bands strategy if not provided
-        if strategy is None:
-            strategy_params = agent_config.get('strategy_params', {}) if agent_config else {}
-            strategy = BollingerBandsStrategy(strategy_params)
+    def __init__(self):
+        super().__init__(
+            name="Bollinger Bands Agent",
+            description="Uses Bollinger Bands for mean reversion and volatility-based trading signals"
+        )
+        self.strategy = None
 
-        super().__init__(strategy, exchange, risk_manager, portfolio_manager, agent_config)
+    def get_required_parameters(self) -> List[str]:
+        return []
 
-    async def _initialize_agent(self) -> None:
-        """Bollinger Bands agent specific initialization."""
-        self.logger.info("Initializing Bollinger Bands trading agent")
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            "period": 20,
+            "std_dev": 2.0,
+            "band_touch_threshold": 0.02,
+            "squeeze_threshold": 0.05,
+            "expansion_threshold": 0.15,
+            "mean_reversion": True,
+            "breakout_signals": True
+        }
 
-        # Validate configuration
-        strategy_params = self.strategy.get_parameters()
+    def _validate_config(self) -> None:
+        """Validate Bollinger Bands-specific configuration."""
+        super()._validate_config()
 
-        period = strategy_params.get('period', 20)
-        std_dev = strategy_params.get('std_dev', 2.0)
-
+        period = self.config.get("period", 20)
         if period < 2:
             raise ValueError("Bollinger Bands period must be at least 2")
 
+        std_dev = self.config.get("std_dev", 2.0)
         if std_dev <= 0:
             raise ValueError("Standard deviation must be positive")
-
-        self.logger.info(f"Bollinger Bands agent initialized with period={period}, std_dev={std_dev}")
 
     async def _process_market_data(self, market_data: List[MarketData]) -> Optional[TradingSignal]:
         """Process market data using Bollinger Bands strategy."""
         try:
+            # Create strategy if it doesn't exist
+            if self.strategy is None:
+                self.strategy = BollingerBandsStrategy(self.config)
+
             signal = self.strategy.analyze(market_data)
 
             # Log signal details
             if signal.signal_type != SignalType.HOLD:
                 metadata = signal.metadata
-                self.logger.info(
+                logger.info(
                     f"BB Signal: {signal.symbol} {signal.signal_type.value} "
                     f"strength={signal.strength:.2f} confidence={signal.confidence:.2f} "
                     f"BB_pos={metadata.get('bb_position', 'N/A'):.3f} "
@@ -319,24 +330,17 @@ class BollingerBandsAgent(BaseTradingAgent):
                 )
 
                 if 'signal_reason' in metadata:
-                    self.logger.info(f"Signal reason: {metadata['signal_reason']}")
+                    logger.info(f"Signal reason: {metadata['signal_reason']}")
 
             return signal
 
         except Exception as e:
-            self.logger.error(f"Error processing market data with Bollinger Bands strategy: {e}")
+            logger.error(f"Error processing market data with Bollinger Bands strategy: {e}")
             return None
 
-    def _get_strategy_metrics(self) -> Dict[str, float]:
-        """Get Bollinger Bands-specific metrics."""
-        strategy_params = self.strategy.get_parameters()
-
-        return {
-            "bb_period": strategy_params.get('period', 20),
-            "bb_std_dev": strategy_params.get('std_dev', 2.0),
-            "band_touch_threshold": strategy_params.get('band_touch_threshold', 0.02),
-            "squeeze_threshold": strategy_params.get('squeeze_threshold', 0.05),
-            "expansion_threshold": strategy_params.get('expansion_threshold', 0.15),
-            "mean_reversion_enabled": 1.0 if strategy_params.get('mean_reversion', True) else 0.0,
-            "breakout_signals_enabled": 1.0 if strategy_params.get('breakout_signals', True) else 0.0
-        }
+    async def analyze(self, market_data: List[MarketData]) -> Optional[TradingSignal]:
+        """
+        Analyze market data and generate trading signals.
+        Required implementation of abstract method from BaseAgent.
+        """
+        return await self._process_market_data(market_data)
